@@ -4,13 +4,16 @@
 
 A proposed four-layer autonomy stack for deploying bipedal humanoid robots on unstructured terrain — from Earth wilderness to the Martian surface.
 
+
+<img width="2051" height="1075" alt="Image" src="https://github.com/user-attachments/assets/4be68dcf-524f-4337-83d2-ca07df26c602" />
+
 ---
 
 ## The Problem
 
-Mars has no flat floors, no GPS, and a 4-24 minute communication delay to Earth. A humanoid operating there must walk over rocks it has never seen, localize itself without external infrastructure, and make every decision autonomously. No human in the loop for anything time-critical.
+Mars has no flat floors, no GPS, and a 4-24 minute communication delay to Earth. A humanoid operating there must walk over rocks it has never seen, localise itself without external infrastructure, and make every decision autonomously. No human in the loop for anything time-critical.
 
-This requires solving four problems simultaneously: walking on rough terrain, perceiving the ground ahead, knowing where you are, and coordinating with other agents to explore efficiently.
+This requires solving four problems simultaneously: walking over rough terrain, perceiving the ground ahead, knowing your position, and coordinating with other agents to explore efficiently.
 
 ---
 
@@ -18,7 +21,7 @@ This requires solving four problems simultaneously: walking on rough terrain, pe
 
 ```
 Layer 3: Mission Coordination       0.1 Hz     Drone + humanoid task assignment
-Layer 2: Navigation & SLAM            1 Hz     GPS-denied localization, path planning
+Layer 2: Navigation & SLAM            1 Hz     GPS-denied localisation, path planning
 Layer 1: RL Locomotion + Perception  50 Hz     Learned balance, stepping, terrain reading
 ```
 
