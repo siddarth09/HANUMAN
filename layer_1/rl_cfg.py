@@ -11,7 +11,7 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     """Create RL runner configuration for HANUMAN rough terrain."""
     return RslRlOnPolicyRunnerCfg(
         actor=RslRlModelCfg(
-            hidden_dims=(512, 256,256, 128),
+            hidden_dims=(1024,512,256, 128),
             activation="elu",
             obs_normalization=True,
             distribution_cfg={
@@ -21,7 +21,7 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
             },
         ),
         critic=RslRlModelCfg(
-            hidden_dims=(512, 256,256, 128),
+            hidden_dims=(1024,512,256, 128),
             activation="elu",
             obs_normalization=True,
         ),
@@ -32,7 +32,7 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
             entropy_coef=0.01,
             num_learning_epochs=5,
             num_mini_batches=4,
-            learning_rate=1.0e-3,
+            learning_rate=1.0e-4,
             schedule="adaptive",
             gamma=0.99,
             lam=0.95,

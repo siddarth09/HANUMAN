@@ -17,43 +17,40 @@ This requires solving four problems simultaneously: walking on rough terrain, pe
 ## Proposed Architecture
 
 ```
-Layer 4: Mission Coordination       0.1 Hz     Drone + humanoid task assignment
-Layer 3: Navigation & SLAM            1 Hz     GPS-denied localization, path planning
-Layer 2: Terrain Perception          10 Hz     Depth camera → local elevation map
-Layer 1: RL Locomotion               50 Hz     Learned joint-level balance + stepping
+Layer 3: Mission Coordination       0.1 Hz     Drone + humanoid task assignment
+Layer 2: Navigation & SLAM            1 Hz     GPS-denied localization, path planning
+Layer 1: RL Locomotion + Perception  50 Hz     Learned balance, stepping, terrain reading
 ```
 
 Each layer communicates downward through a minimal interface — waypoints, heightmaps, velocity commands. Each can be built, tested, and swapped independently.
 
+## Layer 1: Terrain-Adaptive Locomotion + Perception
+
+PPO-trained policy on massively parallel simulation. Observes proprioception 
++ 187-dim body heightmap + per-foot terrain scan, outputs joint position 
+targets. The policy implicitly learns safe foothold selection through 
+training on 8 Mars-relevant terrain types. Domain randomization covers 
+friction, mass, external pushes, and gravity (3.0–10.0 m/s²).
+
+## Layer 2: GPS-Denied Navigation
+
+Factor graph SLAM using GTSAM. Depth camera provides visual features for 
+odometry and mapping (not for foothold selection — Layer 1 handles that). 
+Fuses IMU preintegration, visual odometry, loop closures, and orbital 
+terrain priors. Outputs velocity waypoints to Layer 1.
+
+## Layer 3: Multi-Agent Exploration
+
+Aerial scout provides terrain reconnaissance over ROS2. Shared elevation 
+map fuses aerial and ground observations. Mission planner assigns science 
+targets and coordinates approach routes.
 ---
-
-## Layer 1: Terrain-Adaptive Locomotion
-
-PPO-trained policy on massively parallel simulation. Observes proprioception + local heightmap, outputs joint position targets. Domain randomization covers friction, mass, external pushes, and critically **gravity (3.0–10.0 m/s²)** so the same policy works on Earth (9.81) and Mars (3.72) without retraining.
-
-## Layer 2: Perception-Driven Foothold Selection
-
-Depth camera produces a local elevation map fed directly into the RL observation space. No explicit footstep planner — the policy learns what terrain is safe through training on diverse terrain curriculum (flat, slopes, rubble, steps, loose regolith).
-
-## Layer 3: GPS-Denied Navigation
-
-Factor graph SLAM using GTSAM. Fuses IMU preintegration, visual odometry, loop closures, and orbital terrain priors. Outputs a traversability costmap for A* path planning. Replans when the robot encounters obstacles not visible from the global map.
-
-## Layer 4: Multi-Agent Exploration
-
-Aerial scout (drone) provides terrain reconnaissance over ROS2. Shared elevation map fuses aerial and ground observations. Mission planner assigns science targets and coordinates approach routes.
-
----
-
-## Roadmap
 
 | Phase | Timeline | Goal | Status |
 |---|---|---|---|
-| Foundation | Month 1–2 | Rough terrain RL, Mars gravity curriculum | Planned |
-| Perception | Month 3–4 | Depth camera, heightmap-conditioned policy | Planned |
-| Navigation | Month 5–6 | GTSAM SLAM, autonomous 100m+ traverses | Planned |
-| Multi-Agent | Month 7–8 | Drone coordination, exploration demo | Stretch |
-
+| Locomotion | Month 1–2 | Rough terrain RL with heightmap + Mars gravity | In Progress |
+| Navigation | Month 3–5 | GTSAM SLAM, depth camera, autonomous traverses | Planned |
+| Multi-Agent | Month 6–8 | Drone coordination, exploration demo | Stretch |
 ---
 
 ## Starting Point
