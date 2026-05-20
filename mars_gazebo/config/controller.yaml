@@ -1,0 +1,105 @@
+# HANUMAN — G1 Controller Configuration
+# =======================================
+# Joint state broadcaster publishes all joint states to /joint_states.
+# Position controller accepts commands from the rl_policy_node at 50 Hz.
+
+controller_manager:
+  ros__parameters:
+    update_rate: 200  # Hz — controller loop rate (4x policy rate for stability)
+    use_sim_time: true  
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    g1_position_controller:
+      type: position_controllers/JointGroupPositionController
+
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      # Left Leg (6)
+      - left_hip_pitch_joint
+      - left_hip_roll_joint
+      - left_hip_yaw_joint
+      - left_knee_joint
+      - left_ankle_pitch_joint
+      - left_ankle_roll_joint
+      # Right Leg (6)
+      - right_hip_pitch_joint
+      - right_hip_roll_joint
+      - right_hip_yaw_joint
+      - right_knee_joint
+      - right_ankle_pitch_joint
+      - right_ankle_roll_joint
+      # Waist (3)
+      - waist_yaw_joint
+      - waist_roll_joint
+      - waist_pitch_joint
+      # Left Arm (4)
+      - left_shoulder_pitch_joint
+      - left_shoulder_roll_joint
+      - left_shoulder_yaw_joint
+      - left_elbow_joint
+      # Right Arm (4)
+      - right_shoulder_pitch_joint
+      - right_shoulder_roll_joint
+      - right_shoulder_yaw_joint
+      - right_elbow_joint
+      # Left Wrist (3)
+      - left_wrist_roll_joint
+      - left_wrist_pitch_joint
+      - left_wrist_yaw_joint
+      # Right Wrist (3)
+      - right_wrist_roll_joint
+      - right_wrist_pitch_joint
+      - right_wrist_yaw_joint
+
+    interfaces:
+      - position
+      - velocity
+      - effort
+
+# ─── Position Controller ─────────────────────────────────────
+# Subscribes to /g1_position_controller/commands (std_msgs/Float64MultiArray)
+# The rl_policy_node publishes here at 50 Hz.
+# Joint order MUST match the policy's action space exactly.
+g1_position_controller:
+  ros__parameters:
+    joints:
+      # === 29 DOF — EXACT ORDER MATCHING POLICY ACTION SPACE ===
+      # Left Leg (6)
+      - left_hip_pitch_joint
+      - left_hip_roll_joint
+      - left_hip_yaw_joint
+      - left_knee_joint
+      - left_ankle_pitch_joint
+      - left_ankle_roll_joint
+      # Right Leg (6)
+      - right_hip_pitch_joint
+      - right_hip_roll_joint
+      - right_hip_yaw_joint
+      - right_knee_joint
+      - right_ankle_pitch_joint
+      - right_ankle_roll_joint
+      # Waist (3)
+      - waist_yaw_joint
+      - waist_roll_joint
+      - waist_pitch_joint
+      # Left Arm (4)
+      - left_shoulder_pitch_joint
+      - left_shoulder_roll_joint
+      - left_shoulder_yaw_joint
+      - left_elbow_joint
+      # Right Arm (4)
+      - right_shoulder_pitch_joint
+      - right_shoulder_roll_joint
+      - right_shoulder_yaw_joint
+      - right_elbow_joint
+      # Left Wrist (3)
+      - left_wrist_roll_joint
+      - left_wrist_pitch_joint
+      - left_wrist_yaw_joint
+      # Right Wrist (3)
+      - right_wrist_roll_joint
+      - right_wrist_pitch_joint
+      - right_wrist_yaw_joint
