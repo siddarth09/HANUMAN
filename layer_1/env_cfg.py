@@ -76,47 +76,32 @@ MARS_TERRAINS_CFG = TerrainGeneratorCfg(
 
         # 25% random rough — dominant Mars surface (regolith, small rocks)
         "random_rough": random_rough(
-            proportion=0.25,
-            noise_range=(0.02, 0.15),  # Up to 15cm variation
+            proportion=0.15,
+            noise_range=(0.02, 0.10),  # Up to 15cm variation
             noise_step=0.04,
         ),
 
         # 15% slopes — crater walls, hillsides
         "hf_pyramid_slope": hf_pyramid_slope(
-            proportion=0.15,
+            proportion=0.20,
             slope_range=(0.0, 0.8),  # Up to ~38 degrees
         ),
 
         # 10% inverted slopes — descending into craters
         "hf_pyramid_slope_inv": hf_pyramid_slope_inv(
-            proportion=0.10,
+            proportion=0.20,
             slope_range=(0.0, 0.8),
         ),
-
-        # 15% discrete obstacles — boulders, rock outcrops
-        "discrete_obstacles": discrete_obstacles(
-            proportion=0.15,
-            obstacle_height_range=(0.05, 0.25),
-            num_obstacles=40,
-        ),
-
-        # 10% stepping stones — isolated stable footholds between gaps
-        "stepping_stones": stepping_stones(
-            proportion=0.10,
-            stone_height=0.15,
-            stone_height_variation=0.1,
-        ),
-
-        # 10% stairs — layered rock formations
-        "pyramid_stairs": pyramid_stairs(
-            proportion=0.10,
-            step_height_range=(0.0, 0.12),
-            step_width=0.35,
-        ),
+        # # 10% stairs — layered rock formations
+        # "pyramid_stairs": pyramid_stairs(
+        #     proportion=0.10,
+        #     step_height_range=(0.0, 0.12),
+        #     step_width=0.35,
+        # ),
 
         # 5% perlin noise — organic terrain variation
         "perlin_noise": perlin_noise(
-            proportion=0.05,
+            proportion=0.40,
             height_range=(0.0, 0.6),
         ),
     },
@@ -421,31 +406,26 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # terrain-aware upright reward
 
     rewards = {
-        # === TASK REWARDS (positive — what we want) ===
-
-        # Track commanded XY velocity (Gaussian kernel)
+        # === TASK REWARDS ===
         "track_linear_velocity": RewardTermCfg(
             func=mdp.track_linear_velocity,
-            weight=2.0,
+            weight=3.0,
             params={"command_name": "twist", "std": math.sqrt(0.25)},
         ),
-        # Track commanded yaw rate
         "track_angular_velocity": RewardTermCfg(
             func=mdp.track_angular_velocity,
             weight=2.0,
             params={"command_name": "twist", "std": math.sqrt(0.5)},
         ),
-        # Keep torso upright RELATIVE TO TERRAIN NORMAL (not world up)
         "upright": RewardTermCfg(
             func=mdp.upright,
-            weight=1.0,
+            weight=0.5,
             params={
                 "std": math.sqrt(0.2),
                 "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
-                "terrain_sensor_names": ("foot_height_scan",),
+                "terrain_sensor_names": ("foot_height_scan",),  # Mars: terrain-normal aware
             },
         ),
-        # Stay near default pose (speed-dependent tolerance)
         "pose": RewardTermCfg(
             func=mdp.variable_posture,
             weight=1.0,
@@ -489,10 +469,10 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
                 "running_threshold": 1.5,
             },
         ),
-        # Reward feet being in the air for proper swing duration
+        # air_time 
         "air_time": RewardTermCfg(
             func=mdp.feet_air_time,
-            weight=0.5,
+            weight=0.2,
             params={
                 "sensor_name": "feet_ground_contact",
                 "threshold_min": 0.05,
@@ -502,12 +482,10 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             },
         ),
 
-        # === GAIT QUALITY PENALTIES (negative) ===
-
-        # Foot clearance — STRONGER for rough terrain (rocks to clear)
+        # === GAIT PENALTIES — matching proven weights ===
         "foot_clearance": RewardTermCfg(
             func=mdp.feet_clearance,
-            weight=-2.5,
+            weight=-1.0,  # was -2.5
             params={
                 "target_height": 0.1,
                 "height_sensor_name": "foot_height_scan",
@@ -516,7 +494,6 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
                 "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
             },
         ),
-        # Penalize excessive swing height
         "foot_swing_height": RewardTermCfg(
             func=mdp.feet_swing_height,
             weight=-0.25,
@@ -528,10 +505,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
                 "command_threshold": 0.05,
             },
         ),
-        # Foot slip — TRIPLED for tilted rock surfaces
         "foot_slip": RewardTermCfg(
             func=mdp.feet_slip,
-            weight=-0.3,
+            weight=-0.1,  # was -0.3
             params={
                 "sensor_name": "feet_ground_contact",
                 "command_name": "twist",
@@ -539,10 +515,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
                 "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
             },
         ),
-        # Soft landing — 100× STRONGER for rocky terrain impacts
         "soft_landing": RewardTermCfg(
             func=mdp.soft_landing,
-            weight=-1e-3,
+            weight=-1e-5,  # was -1e-3
             params={
                 "sensor_name": "feet_ground_contact",
                 "command_name": "twist",
@@ -550,44 +525,36 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             },
         ),
 
-        # === STABILITY PENALTIES ===
-
-        # Penalize body angular velocity (roll/pitch wobble)
+        # === STABILITY ===
         "body_ang_vel": RewardTermCfg(
             func=mdp.body_angular_velocity_penalty,
             weight=-0.05,
             params={"asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",))},
         ),
-        # Penalize angular momentum
         "angular_momentum": RewardTermCfg(
             func=mdp.angular_momentum_penalty,
             weight=-0.02,
             params={"sensor_name": "robot/root_angmom"},
         ),
 
-        # === SAFETY PENALTIES ===
-
-        # Joint limits
+        # === SAFETY ===
         "dof_pos_limits": RewardTermCfg(
             func=mdp.joint_pos_limits,
             weight=-1.0,
         ),
-        # Action smoothness
         "action_rate_l2": RewardTermCfg(
             func=mdp.action_rate_l2,
             weight=-0.1,
         ),
-        # Self-collisions — INCREASED for extreme poses on rough terrain
         "self_collisions": RewardTermCfg(
             func=mdp.self_collision_cost,
-            weight=-1.5,
+            weight=-1.0,  # was -1.5
             params={
                 "sensor_name": self_collision_cfg.name,
                 "force_threshold": 10.0,
             },
         ),
     }
-
     # ─── Terminations ──────────────────────────────────────
 
     terminations = {
@@ -602,6 +569,10 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         "out_of_terrain_bounds": TerminationTermCfg(
             func=mdp.out_of_terrain_bounds,
             time_out=True,
+        ),
+        "base_too_low": TerminationTermCfg(
+            func=mdp.root_height_below_minimum_terrain_relative,
+            params={"minimum_height": 0.30},
         ),
     }
 
@@ -621,9 +592,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
                     # Start slow
                     {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
                     # After 30K env steps, expand range
-                    {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
+                    {"step": 5000 * 24, "lin_vel_x": (-1.5, 1.5), "ang_vel_z": (-0.7, 0.7)},
                     # After 60K env steps, full Mars exploration speed
-                    {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
+                    {"step": 10000 * 24, "lin_vel_x": (-2.0, 2.0)},
                 ],
             },
         ),
@@ -668,7 +639,7 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             azimuth=90.0,
         ),
         sim=SimulationCfg(
-            nconmax=100,
+            nconmax=160,
             njmax=1500,
             contact_sensor_maxmatch=500,
             mujoco=MujocoCfg(
@@ -679,7 +650,7 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             ),
         ),
         decimation=4,
-        episode_length_s=20.0,
+        episode_length_s=30.0,
     )
 
     # ─── Play mode overrides ───────────────────────────────
