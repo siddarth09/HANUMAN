@@ -59,14 +59,10 @@ joint_state_broadcaster:
       - velocity
       - effort
 
-# ─── Position Controller ─────────────────────────────────────
-# Subscribes to /g1_position_controller/commands (std_msgs/Float64MultiArray)
-# The rl_policy_node publishes here at 50 Hz.
-# Joint order MUST match the policy's action space exactly.
 g1_position_controller:
   ros__parameters:
     joints:
-      # === 29 DOF — EXACT ORDER MATCHING POLICY ACTION SPACE ===
+      # === 29 DOF — MJLAB TRAINING ORDER ===
       # Left Leg (6)
       - left_hip_pitch_joint
       - left_hip_roll_joint
@@ -90,15 +86,15 @@ g1_position_controller:
       - left_shoulder_roll_joint
       - left_shoulder_yaw_joint
       - left_elbow_joint
+      # Left Wrist (3) ← BEFORE right arm in mjlab
+      - left_wrist_roll_joint
+      - left_wrist_pitch_joint
+      - left_wrist_yaw_joint
       # Right Arm (4)
       - right_shoulder_pitch_joint
       - right_shoulder_roll_joint
       - right_shoulder_yaw_joint
       - right_elbow_joint
-      # Left Wrist (3)
-      - left_wrist_roll_joint
-      - left_wrist_pitch_joint
-      - left_wrist_yaw_joint
       # Right Wrist (3)
       - right_wrist_roll_joint
       - right_wrist_pitch_joint

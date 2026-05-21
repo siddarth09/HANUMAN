@@ -1,27 +1,11 @@
-"""
-HANUMAN — Launch G1 in Mars Gazebo Environment.
 
-Launches:
-  1. Gazebo Sim with Mars terrain world
-  2. robot_state_publisher (URDF → TF tree)
-  3. Spawn G1 model into Gazebo
-  4. ros2_control controller_manager (via gz_ros2_control plugin)
-  5. Joint state broadcaster
-  6. Position controller
-  7. ros_gz_bridge for sensor topics
-
-Usage:
-  ros2 launch mars_gazebo gazebo.launch.py
-  ros2 launch mars_gazebo gazebo.launch.py terrain:=flat
-  ros2 launch mars_gazebo gazebo.launch.py terrain:=curiosity
-  ros2 launch mars_gazebo gazebo.launch.py terrain:=mars_base
-"""
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
     TimerAction,
@@ -54,10 +38,10 @@ def launch_setup(context):
     # ── Terrain-dependent spawn positions ──
     spawn_positions = {
         "flat":      ("0.0", "0.0", "1.0"),
-        "curiosity": ("0.0", "0.0", "1.0"),
-        "mars_base": ("0.0", "0.0", "5.0"),
+        "curiosity": ("0.0", "0.0", "0.0"),
+        "mars_base": ("0.0", "0.0", "1.5"),
     }
-    sx, sy, sz = spawn_positions.get(terrain_val, ("0.0", "0.0", "1.0"))
+    sx, sy, sz = spawn_positions.get(terrain_val, ("0.0", "0.0", "0.0"))
 
     # ── URDF ──
     urdf_file = os.path.join(pkg_share, "unitree_g1", "g1_gazebo.urdf")
@@ -81,7 +65,7 @@ def launch_setup(context):
             ])
         ),
         launch_arguments={
-            "gz_args": f"-r -v 4 {world_file}",
+            "gz_args": f"-v 4 {world_file}",
             "on_exit_shutdown": "true",
         }.items(),
     )
@@ -96,7 +80,17 @@ def launch_setup(context):
         }],
         output="screen",
     )
-
+    unpause_sim = ExecuteProcess(
+        cmd=[
+            "gz", "service",
+            "-s", "/world/mars_surface/control",
+            "--reqtype", "gz.msgs.WorldControl",
+            "--reptype", "gz.msgs.Boolean",
+            "--timeout", "5000",
+            "--req", "pause: false",
+        ],
+        output="screen",
+    )
     # ── 3. Spawn G1 into Gazebo ──
     spawn_robot = Node(
         package="ros_gz_sim",
@@ -112,21 +106,23 @@ def launch_setup(context):
     )
 
     # ── 4. ROS-Gazebo Bridge ──
+  
     bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
         arguments=[
             "/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU",
-            "/camera/depth/image_raw@sensor_msgs/msg/Image@gz.msgs.Image",
-            "/camera/depth/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo",
-            "/camera/depth/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked",
-            "/camera/color/image_raw@sensor_msgs/msg/Image@gz.msgs.Image",
-            "/lidar/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked",
+            "/camera/depth/image_raw@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/camera/depth/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
+            "/camera/depth/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+            "/camera/color/image_raw@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/lidar/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
             "/world/mars_surface/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            "/ground_truth/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry",
+            "/model/g1/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
         ],
         remappings=[
             ("/world/mars_surface/clock", "/clock"),
+            ("/model/g1/odometry", "/odom"),
         ],
         output="screen",
         parameters=[{"use_sim_time": True}],
@@ -155,6 +151,34 @@ def launch_setup(context):
         output="screen",
     )
 
+    default_pose = [
+        # Left leg
+        -0.3,  0.0,  0.0,  0.6,  -0.3,  0.0,
+        # Right leg
+        -0.3,  0.0,  0.0,  0.6,  -0.3,  0.0,
+        # Waist
+         0.0,  0.0,  0.0,
+        # Left arm + elbow
+         0.2,  0.2,  0.0,  0.6,
+        # Left wrist (locked)
+         0.0,  0.0,  0.0,
+        # Right arm + elbow
+         0.2, -0.2,  0.0,  0.6,
+        # Right wrist (locked)
+         0.0,  0.0,  0.0,
+    ]
+    pose_str = ", ".join(str(v) for v in default_pose)
+
+    send_default_pose = ExecuteProcess(
+        cmd=[
+            "ros2", "topic", "pub", "--once",
+            "/g1_position_controller/commands",
+            "std_msgs/msg/Float64MultiArray",
+            f"{{data: [{pose_str}]}}",
+        ],
+        output="screen",
+    )
+
     return [
         gazebo,
         robot_state_publisher,
@@ -162,6 +186,8 @@ def launch_setup(context):
         bridge,
         TimerAction(period=5.0, actions=[joint_state_broadcaster_spawner]),
         TimerAction(period=7.0, actions=[position_controller_spawner]),
+        TimerAction(period=9.0, actions=[send_default_pose]),
+        TimerAction(period=10.0, actions=[unpause_sim]),
     ]
 
 
