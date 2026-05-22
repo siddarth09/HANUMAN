@@ -34,4 +34,4 @@ Thumbs.db
 *.mjlog
 
 
-policy/
+policy/*.mtl
