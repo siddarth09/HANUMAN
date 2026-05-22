@@ -44,7 +44,7 @@ const std::array<std::string, NUM_JOINTS> JOINT_NAMES = {
     "left_shoulder_roll_joint",   // 16
     "left_shoulder_yaw_joint",    // 17
     "left_elbow_joint",           // 18
-    "left_wrist_roll_joint",      // 19 
+    "left_wrist_roll_joint",      // 19
     "left_wrist_pitch_joint",     // 20
     "left_wrist_yaw_joint",       // 21
     "right_shoulder_pitch_joint", // 22
@@ -128,7 +128,7 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
 {
     // ── Parameters ──
     this->declare_parameter<std::string>("onnx_path", "");
-    this->declare_parameter<double>("policy_rate", 50.0);
+    this->declare_parameter<double>("policy_rate", 100.0);
     this->declare_parameter<double>("cmd_vel_x", 0.5);
     this->declare_parameter<double>("cmd_vel_y", 0.0);
     this->declare_parameter<double>("cmd_yaw_rate", 0.0);
@@ -166,7 +166,6 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
     opts.SetIntraOpNumThreads(2);
     opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-    // CPU only — MLP is small, GPU adds no benefit
     RCLCPP_INFO(this->get_logger(), "Using CPU execution provider");
 
     session_ = std::make_unique<Ort::Session>(env_, onnx_path.c_str(), opts);
@@ -186,8 +185,10 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
     joint_positions_.fill(0.0f);
     joint_velocities_.fill(0.0f);
     base_lin_vel_.fill(0.0f);
+    base_lin_vel_world_.fill(0.0f);
     base_ang_vel_.fill(0.0f);
     projected_gravity_ = {0.0f, 0.0f, -1.0f};
+    imu_quat_ = {1.0f, 0.0f, 0.0f, 0.0f};
     last_action_.fill(0.0f);
     command_.fill(0.0f);
 
@@ -200,20 +201,20 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
         std::bind(&RLPolicyNode::joint_states_cb, this, std::placeholders::_1));
 
     sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
-        "/imu/data", qos,
+        "/imu_broadcaster/imu", qos,
         std::bind(&RLPolicyNode::imu_cb, this, std::placeholders::_1));
+
+    sub_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        "/ground_truth/odom", qos,
+        std::bind(&RLPolicyNode::odom_cb, this, std::placeholders::_1));
 
     sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", 10,
         std::bind(&RLPolicyNode::cmd_vel_cb, this, std::placeholders::_1));
 
-    sub_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    "/odom", qos,
-    std::bind(&RLPolicyNode::odom_cb, this, std::placeholders::_1));
-
     // ── Publisher ──
     pub_commands_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
-        "/g1_position_controller/commands", 10);
+        "/position_controller/commands", 10);
 
     // ── Timer ──
     double rate = this->get_parameter("policy_rate").as_double();
@@ -234,8 +235,6 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
 void RLPolicyNode::joint_states_cb(
     const sensor_msgs::msg::JointState::SharedPtr msg)
 {
-    // /joint_states arrives in URDF order. We use a name-based map
-    // to store values in our mjlab-ordered arrays.
     if (joint_index_map_.empty()) {
         for (size_t i = 0; i < msg->name.size(); ++i) {
             for (int j = 0; j < NUM_JOINTS; ++j) {
@@ -271,23 +270,33 @@ void RLPolicyNode::imu_cb(const sensor_msgs::msg::Imu::SharedPtr msg)
     base_ang_vel_[1] = static_cast<float>(msg->angular_velocity.y);
     base_ang_vel_[2] = static_cast<float>(msg->angular_velocity.z);
 
-    // IMU gives acceleration, not velocity. 
-    // For a standing robot, acceleration ≈ 0 in body frame (gravity removed by IMU)
-    // Use as rough proxy — policy was trained with actual velocity
-    base_lin_vel_[0] = static_cast<float>(msg->linear_acceleration.x);
-    base_lin_vel_[1] = static_cast<float>(msg->linear_acceleration.y);
-    base_lin_vel_[2] = static_cast<float>(msg->linear_acceleration.z);
-
-    // Projected gravity from orientation
+    // Store quaternion for world→body velocity rotation
     float qw = static_cast<float>(msg->orientation.w);
     float qx = static_cast<float>(msg->orientation.x);
     float qy = static_cast<float>(msg->orientation.y);
     float qz = static_cast<float>(msg->orientation.z);
+    imu_quat_ = {qw, qx, qy, qz};
 
+    // Projected gravity: rotate world [0, 0, -1] into body frame
     projected_gravity_[0] = -2.0f * (qx * qz - qw * qy);
     projected_gravity_[1] = -2.0f * (qy * qz + qw * qx);
     projected_gravity_[2] = -(1.0f - 2.0f * (qx * qx + qy * qy));
+
     imu_received_ = true;
+}
+
+void RLPolicyNode::odom_cb(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+    float vx = static_cast<float>(msg->twist.twist.linear.x);
+    float vy = static_cast<float>(msg->twist.twist.linear.y);
+    float vz = static_cast<float>(msg->twist.twist.linear.z);
+
+    // NaN guard
+    if (!std::isnan(vx) && !std::isnan(vy) && !std::isnan(vz)) {
+        base_lin_vel_world_[0] = vx;
+        base_lin_vel_world_[1] = vy;
+        base_lin_vel_world_[2] = vz;
+    }
 }
 
 void RLPolicyNode::cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -297,13 +306,6 @@ void RLPolicyNode::cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg)
     command_[2] = static_cast<float>(msg->angular.z);
 }
 
-void RLPolicyNode::odom_cb(const nav_msgs::msg::Odometry::SharedPtr msg)
-{
-    // Body-frame linear velocity from odometry
-    base_lin_vel_[0] = static_cast<float>(msg->twist.twist.linear.x);
-    base_lin_vel_[1] = static_cast<float>(msg->twist.twist.linear.y);
-    base_lin_vel_[2] = static_cast<float>(msg->twist.twist.linear.z);
-}
 // ═══════════════════════════════════════════════════════════════════
 // Policy inference
 // ═══════════════════════════════════════════════════════════════════
@@ -312,10 +314,27 @@ void RLPolicyNode::build_observation()
 {
     obs_.fill(0.0f);
 
-    // [0:3] base linear velocity
-    obs_[0] = 0.0f;
-    obs_[1] = 0.0f;
-    obs_[2] = 0.0f;
+    // [0:3] base linear velocity — rotate world-frame odom into body frame
+    {
+        float vx = base_lin_vel_world_[0];
+        float vy = base_lin_vel_world_[1];
+        float vz = base_lin_vel_world_[2];
+
+        // Inverse quaternion rotation: q_conj * v * q
+        float qw = imu_quat_[0];
+        float cqx = -imu_quat_[1];
+        float cqy = -imu_quat_[2];
+        float cqz = -imu_quat_[3];
+
+        // Rodrigues: v' = v + 2*qw*(q_conj.xyz × v) + 2*(q_conj.xyz × (q_conj.xyz × v))
+        float tx = 2.0f * (cqy * vz - cqz * vy);
+        float ty = 2.0f * (cqz * vx - cqx * vz);
+        float tz = 2.0f * (cqx * vy - cqy * vx);
+
+        obs_[0] = vx + qw * tx + (cqy * tz - cqz * ty);
+        obs_[1] = vy + qw * ty + (cqz * tx - cqx * tz);
+        obs_[2] = vz + qw * tz + (cqx * ty - cqy * tx);
+    }
 
     // [3:6] base angular velocity
     std::copy(base_ang_vel_.begin(), base_ang_vel_.end(), obs_.begin() + 3);
@@ -335,17 +354,12 @@ void RLPolicyNode::build_observation()
     std::copy(last_action_.begin(), last_action_.end(), obs_.begin() + 67);
 
     // [96:99] velocity command
-    bool has_cmd = (command_[0] != 0.0f || command_[1] != 0.0f || command_[2] != 0.0f);
-    if (has_cmd) {
-        std::copy(command_.begin(), command_.end(), obs_.begin() + 96);
-    } else {
-        obs_[96] = static_cast<float>(this->get_parameter("cmd_vel_x").as_double());
-        obs_[97] = static_cast<float>(this->get_parameter("cmd_vel_y").as_double());
-        obs_[98] = static_cast<float>(this->get_parameter("cmd_yaw_rate").as_double());
-    }
+    obs_[96] = command_[0];
+    obs_[97] = command_[1];
+    obs_[98] = command_[2];
+    
 
     // [99:286] height scan — fill with training mean (flat ground assumption)
-    // Zeroing these causes extreme normalized values that break the policy.
     static constexpr float HEIGHT_SCAN_DEFAULT = 0.150467f;
     std::fill(obs_.begin() + 99, obs_.begin() + 286, HEIGHT_SCAN_DEFAULT);
 
@@ -379,6 +393,7 @@ void RLPolicyNode::policy_step()
         last_action_[i] = a;
     }
 
+    // Commands in mjlab order — matches controller.yaml
     auto cmd_msg = std_msgs::msg::Float64MultiArray();
     cmd_msg.data.resize(NUM_JOINTS);
     for (int i = 0; i < NUM_JOINTS; ++i) {
@@ -390,10 +405,6 @@ void RLPolicyNode::policy_step()
 }
 
 }  // namespace hanuman
-
-// ═══════════════════════════════════════════════════════════════════
-// Main
-// ═══════════════════════════════════════════════════════════════════
 
 int main(int argc, char** argv)
 {

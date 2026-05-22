@@ -70,7 +70,7 @@ install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 install(DIRECTORY unitree_g1/ DESTINATION share/${PROJECT_NAME}/unitree_g1)
 install(DIRECTORY worlds/ DESTINATION share/${PROJECT_NAME}/worlds)
 install(DIRECTORY model/ DESTINATION share/${PROJECT_NAME}/model)
-
+install(DIRECTORY unitree_g1_mjcf/ DESTINATION share/${PROJECT_NAME}/unitree_g1_mjcf)
 # Install policy (populated by download_policy.py)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/policy")
   install(DIRECTORY policy/ DESTINATION share/${PROJECT_NAME}/policy)
@@ -79,6 +79,7 @@ endif()
 # Install Python scripts
 install(PROGRAMS
   scripts/policy_downloader.py
+  scripts/teleop.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

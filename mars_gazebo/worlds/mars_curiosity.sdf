@@ -9,7 +9,7 @@
     </scene>
 
     <!-- Mars gravity -->
-    <gravity>0 0 -3.711</gravity>
+    <gravity>0 0 -9.81</gravity>
 
     <!-- Physics -->
     <physics name="default_physics" type="dart">

@@ -2,7 +2,7 @@
  * HANUMAN — RL Policy Deployment Node (Header)
  *
  * Loads the trained ONNX locomotion policy and runs inference at 50Hz,
- * subscribing to joint states and IMU, and publishing joint position
+ * subscribing to joint states, IMU, odometry, and publishing joint position
  * commands to the g1_position_controller.
  */
 
@@ -21,14 +21,11 @@
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+
 #include <onnxruntime_cxx_api.h>
 
 namespace hanuman
 {
-
-// ═══════════════════════════════════════════════════════════════════
-// Constants
-// ═══════════════════════════════════════════════════════════════════
 
 static constexpr int NUM_JOINTS = 29;
 static constexpr int OBS_DIM    = 288;
@@ -37,10 +34,6 @@ static constexpr int ACT_DIM    = 29;
 extern const std::array<std::string, NUM_JOINTS> JOINT_NAMES;
 extern const std::array<float, NUM_JOINTS> DEFAULT_JOINT_POS;
 extern const std::array<float, NUM_JOINTS> ACTION_SCALE;
-
-// ═══════════════════════════════════════════════════════════════════
-// RLPolicyNode
-// ═══════════════════════════════════════════════════════════════════
 
 class RLPolicyNode : public rclcpp::Node
 {
@@ -51,8 +44,8 @@ private:
     // ── Callbacks ──
     void joint_states_cb(const sensor_msgs::msg::JointState::SharedPtr msg);
     void imu_cb(const sensor_msgs::msg::Imu::SharedPtr msg);
-    void cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg);
     void odom_cb(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg);
 
     // ── Policy ──
     void build_observation();
@@ -73,9 +66,11 @@ private:
     // ── Robot state ──
     std::array<float, NUM_JOINTS> joint_positions_{};
     std::array<float, NUM_JOINTS> joint_velocities_{};
-    std::array<float, 3> base_lin_vel_{};
+    std::array<float, 3> base_lin_vel_{};       // body-frame linear velocity
+    std::array<float, 3> base_lin_vel_world_{};  // world-frame from odom
     std::array<float, 3> base_ang_vel_{};
     std::array<float, 3> projected_gravity_{};
+    std::array<float, 4> imu_quat_{};           // [w, x, y, z] for frame rotation
     std::array<float, NUM_JOINTS> last_action_{};
     std::array<float, 3> command_{};
 
@@ -86,9 +81,9 @@ private:
     // ── ROS interfaces ──
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_joint_states_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pub_commands_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
     rclcpp::TimerBase::SharedPtr timer_;
 };
 
