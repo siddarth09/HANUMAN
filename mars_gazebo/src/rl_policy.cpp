@@ -11,9 +11,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace fs = std::filesystem;
 
@@ -128,7 +130,7 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
 {
     // ── Parameters ──
     this->declare_parameter<std::string>("onnx_path", "");
-    this->declare_parameter<double>("policy_rate", 100.0);
+    this->declare_parameter<double>("policy_rate", 50.0);
     this->declare_parameter<double>("cmd_vel_x", 0.5);
     this->declare_parameter<double>("cmd_vel_y", 0.0);
     this->declare_parameter<double>("cmd_yaw_rate", 0.0);
@@ -191,6 +193,8 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
     imu_quat_ = {1.0f, 0.0f, 0.0f, 0.0f};
     last_action_.fill(0.0f);
     command_.fill(0.0f);
+    height_scan_.fill(HEIGHT_SCAN_DEFAULT);
+    foot_heights_ = {0.047589f, 0.047088f};
 
     // ── Subscribers ──
     rclcpp::QoS qos(1);
@@ -211,6 +215,10 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
     sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", 10,
         std::bind(&RLPolicyNode::cmd_vel_cb, this, std::placeholders::_1));
+
+    sub_height_scan_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/height_scan/points", qos,
+        std::bind(&RLPolicyNode::height_scan_cb, this, std::placeholders::_1));
 
     // ── Publisher ──
     pub_commands_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
@@ -270,7 +278,6 @@ void RLPolicyNode::imu_cb(const sensor_msgs::msg::Imu::SharedPtr msg)
     base_ang_vel_[1] = static_cast<float>(msg->angular_velocity.y);
     base_ang_vel_[2] = static_cast<float>(msg->angular_velocity.z);
 
-    // Store quaternion for world→body velocity rotation
     float qw = static_cast<float>(msg->orientation.w);
     float qx = static_cast<float>(msg->orientation.x);
     float qy = static_cast<float>(msg->orientation.y);
@@ -282,6 +289,11 @@ void RLPolicyNode::imu_cb(const sensor_msgs::msg::Imu::SharedPtr msg)
     projected_gravity_[1] = -2.0f * (qy * qz + qw * qx);
     projected_gravity_[2] = -(1.0f - 2.0f * (qx * qx + qy * qy));
 
+    // Extract yaw for height scan rotation
+    float siny = 2.0f * (qw * qz + qx * qy);
+    float cosy = 1.0f - 2.0f * (qy * qy + qz * qz);
+    robot_yaw_ = std::atan2(siny, cosy);
+
     imu_received_ = true;
 }
 
@@ -291,12 +303,13 @@ void RLPolicyNode::odom_cb(const nav_msgs::msg::Odometry::SharedPtr msg)
     float vy = static_cast<float>(msg->twist.twist.linear.y);
     float vz = static_cast<float>(msg->twist.twist.linear.z);
 
-    // NaN guard
     if (!std::isnan(vx) && !std::isnan(vy) && !std::isnan(vz)) {
         base_lin_vel_world_[0] = vx;
         base_lin_vel_world_[1] = vy;
         base_lin_vel_world_[2] = vz;
     }
+
+    robot_z_ = static_cast<float>(msg->pose.pose.position.z);
 }
 
 void RLPolicyNode::cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -304,6 +317,96 @@ void RLPolicyNode::cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg)
     command_[0] = static_cast<float>(msg->linear.x);
     command_[1] = static_cast<float>(msg->linear.y);
     command_[2] = static_cast<float>(msg->angular.z);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Height scan processing
+// ═══════════════════════════════════════════════════════════════════
+
+void RLPolicyNode::height_scan_cb(
+    const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+    // The downward-facing LiDAR returns points in the sensor frame
+    // (height_scanner_link, fixed to pelvis). Each point's Z is negative
+    // (pointing down). The height observation = distance below robot.
+    //
+    // For now, we take the raw Z values from the pointcloud, negate them
+    // (since rays point down), clamp, and scale by 1/max_distance.
+    // The points come in scan order matching the LiDAR config (16 horizontal × 10 vertical).
+
+    const size_t n_points = msg->width * msg->height;
+
+    if (n_points == 0) {
+        return;
+    }
+
+    // Use PointCloud2 iterators for safe field access
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+
+    std::lock_guard<std::mutex> lock(height_scan_mutex_);
+
+    // Fill height scan buffer from pointcloud
+    // The LiDAR returns points in sensor frame — Z is the depth (negative = below)
+    // We take the distance as |z| for each ray
+    size_t scan_idx = 0;
+    for (size_t i = 0; i < n_points && scan_idx < HEIGHT_SCAN_SIZE;
+         ++i, ++iter_x, ++iter_y, ++iter_z)
+    {
+        float x = *iter_x;
+        float y = *iter_y;
+        float z = *iter_z;
+
+        // Skip invalid points
+        if (std::isnan(x) || std::isnan(y) || std::isnan(z)) {
+            height_scan_[scan_idx] = HEIGHT_SCAN_DEFAULT;
+            ++scan_idx;
+            continue;
+        }
+
+        // Distance from sensor to hit point (rays point downward)
+        float dist = std::sqrt(x * x + y * y + z * z);
+        dist = std::clamp(dist, 0.0f, MAX_RAY_DISTANCE);
+
+        // Scale by 1/max_distance (matches training observation scaling)
+        height_scan_[scan_idx] = dist / MAX_RAY_DISTANCE;
+        ++scan_idx;
+    }
+
+    // Fill remaining slots with default if pointcloud has fewer points
+    for (; scan_idx < HEIGHT_SCAN_SIZE; ++scan_idx) {
+        height_scan_[scan_idx] = HEIGHT_SCAN_DEFAULT;
+    }
+
+    // Estimate foot heights from the closest-to-nadir points
+    // The center rays (roughly indices around n_points/2) point straight down
+    // For simplicity, use the average of central rays as foot height estimate
+    if (n_points >= 10) {
+        // Reset iterators — need to reconstruct
+        sensor_msgs::PointCloud2ConstIterator<float> z_iter(*msg, "z");
+        float sum_z = 0.0f;
+        size_t count = 0;
+        size_t center_start = n_points / 2 - 3;
+        size_t center_end = n_points / 2 + 3;
+        for (size_t i = 0; i < n_points; ++i, ++z_iter) {
+            if (i >= center_start && i < center_end) {
+                float zv = *z_iter;
+                if (!std::isnan(zv)) {
+                    sum_z += std::abs(zv);
+                    ++count;
+                }
+            }
+        }
+        if (count > 0) {
+            float avg_height = sum_z / static_cast<float>(count);
+            // Both feet get similar estimate from pelvis-mounted scanner
+            foot_heights_[0] = avg_height;
+            foot_heights_[1] = avg_height;
+        }
+    }
+
+    height_scan_received_ = true;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -320,13 +423,11 @@ void RLPolicyNode::build_observation()
         float vy = base_lin_vel_world_[1];
         float vz = base_lin_vel_world_[2];
 
-        // Inverse quaternion rotation: q_conj * v * q
         float qw = imu_quat_[0];
         float cqx = -imu_quat_[1];
         float cqy = -imu_quat_[2];
         float cqz = -imu_quat_[3];
 
-        // Rodrigues: v' = v + 2*qw*(q_conj.xyz × v) + 2*(q_conj.xyz × (q_conj.xyz × v))
         float tx = 2.0f * (cqy * vz - cqz * vy);
         float ty = 2.0f * (cqz * vx - cqx * vz);
         float tz = 2.0f * (cqx * vy - cqy * vx);
@@ -357,15 +458,16 @@ void RLPolicyNode::build_observation()
     obs_[96] = command_[0];
     obs_[97] = command_[1];
     obs_[98] = command_[2];
-    
 
-    // [99:286] height scan — fill with training mean (flat ground assumption)
-    static constexpr float HEIGHT_SCAN_DEFAULT = 0.150467f;
-    std::fill(obs_.begin() + 99, obs_.begin() + 286, HEIGHT_SCAN_DEFAULT);
+    // [99:286] height scan
+    {
+        std::lock_guard<std::mutex> lock(height_scan_mutex_);
+        std::copy(height_scan_.begin(), height_scan_.end(), obs_.begin() + 99);
 
-    // [286:288] foot height — fill with training mean
-    obs_[286] = 0.047589f;  // left foot
-    obs_[287] = 0.047088f;  // right foot
+        // [286:288] foot height
+        obs_[286] = foot_heights_[0];
+        obs_[287] = foot_heights_[1];
+    }
 }
 
 void RLPolicyNode::policy_step()
@@ -393,7 +495,6 @@ void RLPolicyNode::policy_step()
         last_action_[i] = a;
     }
 
-    // Commands in mjlab order — matches controller.yaml
     auto cmd_msg = std_msgs::msg::Float64MultiArray();
     cmd_msg.data.resize(NUM_JOINTS);
     for (int i = 0; i < NUM_JOINTS; ++i) {
