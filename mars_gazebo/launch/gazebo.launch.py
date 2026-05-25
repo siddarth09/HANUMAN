@@ -39,7 +39,7 @@ def launch_setup(context):
     spawn_positions = {
         "flat":      ("0.0", "0.0", "1.0"),
         "curiosity": ("0.0", "0.0", "0.0"),
-        "mars_base": ("0.0", "0.0", "1.5"),
+        "mars_base": ("0.0", "-3.0", "1.5"),
     }
     sx, sy, sz = spawn_positions.get(terrain_val, ("0.0", "0.0", "0.0"))
 
@@ -47,6 +47,7 @@ def launch_setup(context):
     urdf_file = os.path.join(pkg_share, "unitree_g1", "g1_gazebo.urdf")
     controllers_yaml = os.path.join(pkg_share, "config", "controller.yaml")
     mesh_dir = os.path.join(pkg_share, "unitree_g1", "meshes")
+    bridge_config = os.path.join(pkg_share, "config", "gz_bridge.yaml")
     with open(urdf_file, "r") as f:
         robot_description = f.read().replace(
             "__CONTROLLERS_YAML_PATH__", controllers_yaml
@@ -110,24 +111,20 @@ def launch_setup(context):
     bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        arguments=[
-            "/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU",
-            "/camera/depth/image_raw@sensor_msgs/msg/Image[gz.msgs.Image",
-            "/camera/depth/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
-            "/camera/depth/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
-            "/camera/color/image_raw@sensor_msgs/msg/Image[gz.msgs.Image",
-            "/lidar/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
-            "/world/mars_surface/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            "/model/g1/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
-        ],
-        remappings=[
-            ("/world/mars_surface/clock", "/clock"),
-            ("/model/g1/odometry", "/odom"),
-        ],
+        arguments=[],
         output="screen",
-        parameters=[{"use_sim_time": True}],
+        parameters=[
+            {"use_sim_time": True},
+            {"config_file": bridge_config},
+        ],
     )
-
+    odom_to_tf = Node(
+        package="mars_gazebo",
+        executable="odom_tf.py",
+        parameters=[{"use_sim_time": True}],
+        output="screen",
+    )
+ 
     # ── 5. Controller Spawners (delayed for gz_ros2_control startup) ──
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
@@ -144,7 +141,7 @@ def launch_setup(context):
         package="controller_manager",
         executable="spawner",
         arguments=[
-            "g1_position_controller",
+            "position_controller",
             "--controller-manager", "/controller_manager",
         ],
         parameters=[{"use_sim_time": True}],
@@ -172,7 +169,7 @@ def launch_setup(context):
     send_default_pose = ExecuteProcess(
         cmd=[
             "ros2", "topic", "pub", "--once",
-            "/g1_position_controller/commands",
+            "/position_controller/commands",
             "std_msgs/msg/Float64MultiArray",
             f"{{data: [{pose_str}]}}",
         ],
@@ -184,10 +181,11 @@ def launch_setup(context):
         robot_state_publisher,
         spawn_robot,
         bridge,
+        odom_to_tf,
+        TimerAction(period=3.0, actions=[unpause_sim]),       
         TimerAction(period=5.0, actions=[joint_state_broadcaster_spawner]),
         TimerAction(period=7.0, actions=[position_controller_spawner]),
         TimerAction(period=9.0, actions=[send_default_pose]),
-        TimerAction(period=10.0, actions=[unpause_sim]),
     ]
 
 

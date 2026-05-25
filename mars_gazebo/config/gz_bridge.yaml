@@ -1,0 +1,66 @@
+# HANUMAN — ros_gz_bridge YAML configuration
+# =============================================
+# Passed via: --ros-args -p config_file:=/path/to/gz_bridge.yaml
+# frame_id overrides Gazebo's "g1/<link>/<sensor>" frames to match URDF TF tree.
+
+# IMU (pelvis-mounted)
+- gz_topic_name: /imu_broadcaster/imu
+  ros_topic_name: /imu_broadcaster/imu
+  ros_type_name: sensor_msgs/msg/Imu
+  gz_type_name: gz.msgs.IMU
+  direction: GZ_TO_ROS
+  frame_id: imu_in_pelvis
+
+# Depth camera image
+- gz_topic_name: /camera/depth
+  ros_topic_name: /camera/depth/image_raw
+  ros_type_name: sensor_msgs/msg/Image
+  gz_type_name: gz.msgs.Image
+  direction: GZ_TO_ROS
+  frame_id: d435_link
+
+# Depth camera info
+- gz_topic_name: /camera/camera_info
+  ros_topic_name: /camera/depth/camera_info
+  ros_type_name: sensor_msgs/msg/CameraInfo
+  gz_type_name: gz.msgs.CameraInfo
+  direction: GZ_TO_ROS
+  frame_id: d435_link
+
+# Depth pointcloud
+- gz_topic_name: /camera/depth/points
+  ros_topic_name: /camera/depth/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+  frame_id: d435_link
+
+# Color camera
+- gz_topic_name: /camera/color
+  ros_topic_name: /camera/color/image_raw
+  ros_type_name: sensor_msgs/msg/Image
+  gz_type_name: gz.msgs.Image
+  direction: GZ_TO_ROS
+  frame_id: d435_link
+
+# LiDAR — Gz publishes on /lidar/points/points
+- gz_topic_name: /lidar/points/points
+  ros_topic_name: /lidar/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+  frame_id: mid360_link
+
+# Clock
+- gz_topic_name: /world/mars_surface/clock
+  ros_topic_name: /clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: gz.msgs.Clock
+  direction: GZ_TO_ROS
+
+# Odometry
+- gz_topic_name: /model/g1/odometry
+  ros_topic_name: /ground_truth/odom
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: gz.msgs.Odometry
+  direction: GZ_TO_ROS

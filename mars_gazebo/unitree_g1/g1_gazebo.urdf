@@ -2026,14 +2026,7 @@
     <axis xyz="0 1 0"/>
     <limit lower="0" upper="0" effort="0" velocity="0"/>
   </joint>
-  <!-- BrainCo end -->
-
-
-  <!-- ================================================================= -->
-  <!-- GAZEBO HARMONIC INTEGRATION (HANUMAN Layer 2)                     -->
-  <!-- ================================================================= -->
-
-  <!-- ── ros2_control: 29 DOF position interface ── -->
+ 
   <ros2_control name="g1_ros2_control" type="system">
     <hardware>
       <plugin>gz_ros2_control/GazeboSimSystem</plugin>
@@ -2156,6 +2149,25 @@
       <state_interface name="velocity"/>
       <state_interface name="effort"/>
     </joint>
+    <!-- Left Wrist (3) ← BEFORE right arm, matching mjlab order -->
+    <joint name="left_wrist_roll_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="left_wrist_pitch_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="left_wrist_yaw_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
     <!-- Right Arm (4) -->
     <joint name="right_shoulder_pitch_joint">
       <command_interface name="position"/>
@@ -2176,25 +2188,6 @@
       <state_interface name="effort"/>
     </joint>
     <joint name="right_elbow_joint">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-    </joint>
-    <!-- Left Wrist (3) -->
-    <joint name="left_wrist_roll_joint">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-    </joint>
-    <joint name="left_wrist_pitch_joint">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-    </joint>
-    <joint name="left_wrist_yaw_joint">
       <command_interface name="position"/>
       <state_interface name="position"/>
       <state_interface name="velocity"/>
@@ -2234,7 +2227,7 @@
     <sensor name="imu_sensor" type="imu">
       <always_on>true</always_on>
       <update_rate>200</update_rate>
-      <topic>imu/data</topic>
+      <topic>/imu_broadcaster/imu</topic>
       <imu>
         <angular_velocity>
           <x><noise type="none"/></x>
