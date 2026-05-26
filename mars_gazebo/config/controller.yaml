@@ -5,7 +5,7 @@
 
 controller_manager:
   ros__parameters:
-    update_rate: 500  
+    update_rate: 200  # Hz — controller loop rate (4x policy rate for stability)
     use_sim_time: true
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster

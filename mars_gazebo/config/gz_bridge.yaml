@@ -1,7 +1,6 @@
 # HANUMAN — ros_gz_bridge YAML configuration
 # =============================================
-# Passed via: --ros-args -p config_file:=/path/to/gz_bridge.yaml
-# frame_id overrides Gazebo's "g1/<link>/<sensor>" frames to match URDF TF tree.
+
 
 # IMU (pelvis-mounted)
 - gz_topic_name: /imu_broadcaster/imu
@@ -44,12 +43,12 @@
   frame_id: d435_link
 
 # LiDAR — Gz publishes on /lidar/points/points
-# - gz_topic_name: /lidar/points/points
-#   ros_topic_name: /lidar/points
-#   ros_type_name: sensor_msgs/msg/PointCloud2
-#   gz_type_name: gz.msgs.PointCloudPacked
-#   direction: GZ_TO_ROS
-#   frame_id: mid360_link
+- gz_topic_name: /lidar/points/points
+  ros_topic_name: /lidar/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+  frame_id: mid360_link
 
 # Clock
 - gz_topic_name: /world/mars_surface/clock
