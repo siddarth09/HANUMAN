@@ -80,7 +80,6 @@ endif()
 install(PROGRAMS
   scripts/policy_downloader.py
   scripts/teleop.py
-  scripts/odom_tf.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

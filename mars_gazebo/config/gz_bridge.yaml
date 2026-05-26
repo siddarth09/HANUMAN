@@ -11,13 +11,13 @@
   direction: GZ_TO_ROS
   frame_id: imu_in_pelvis
 
-# Depth camera image
-- gz_topic_name: /camera/depth
-  ros_topic_name: /camera/depth/image_raw
-  ros_type_name: sensor_msgs/msg/Image
-  gz_type_name: gz.msgs.Image
-  direction: GZ_TO_ROS
-  frame_id: d435_link
+# # Depth camera image
+# - gz_topic_name: /camera/depth
+#   ros_topic_name: /camera/depth/image_raw
+#   ros_type_name: sensor_msgs/msg/Image
+#   gz_type_name: gz.msgs.Image
+#   direction: GZ_TO_ROS
+#   frame_id: d435_link
 
 # Depth camera info
 - gz_topic_name: /camera/camera_info
@@ -27,13 +27,13 @@
   direction: GZ_TO_ROS
   frame_id: d435_link
 
-# Depth pointcloud
-- gz_topic_name: /camera/depth/points
-  ros_topic_name: /camera/depth/points
-  ros_type_name: sensor_msgs/msg/PointCloud2
-  gz_type_name: gz.msgs.PointCloudPacked
-  direction: GZ_TO_ROS
-  frame_id: d435_link
+# # Depth pointcloud
+# - gz_topic_name: /camera/depth/points
+#   ros_topic_name: /camera/depth/points
+#   ros_type_name: sensor_msgs/msg/PointCloud2
+#   gz_type_name: gz.msgs.PointCloudPacked
+#   direction: GZ_TO_ROS
+#   frame_id: d435_link
 
 # Color camera
 - gz_topic_name: /camera/color
@@ -44,12 +44,12 @@
   frame_id: d435_link
 
 # LiDAR — Gz publishes on /lidar/points/points
-- gz_topic_name: /lidar/points/points
-  ros_topic_name: /lidar/points
-  ros_type_name: sensor_msgs/msg/PointCloud2
-  gz_type_name: gz.msgs.PointCloudPacked
-  direction: GZ_TO_ROS
-  frame_id: mid360_link
+# - gz_topic_name: /lidar/points/points
+#   ros_topic_name: /lidar/points
+#   ros_type_name: sensor_msgs/msg/PointCloud2
+#   gz_type_name: gz.msgs.PointCloudPacked
+#   direction: GZ_TO_ROS
+#   frame_id: mid360_link
 
 # Clock
 - gz_topic_name: /world/mars_surface/clock
