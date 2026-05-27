@@ -222,7 +222,7 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
 
     // ── Publisher ──
     pub_commands_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
-        "/position_controller/commands", 10);
+        "/g1_position_controller/commands", 10);
 
     // ── Timer ──
     double rate = this->get_parameter("policy_rate").as_double();

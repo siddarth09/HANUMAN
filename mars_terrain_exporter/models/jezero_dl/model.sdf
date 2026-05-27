@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<sdf version="1.11">
+  <model name="jezero_dl">
+    <static>true</static>
+    <link name="terrain_link">
+
+      <!-- ============================================================ -->
+      <!-- Collision: triangle mesh (btBvhTriangleMeshShape)            -->
+      <!-- Bullet Featherstone supports concave mesh for static bodies. -->
+      <!-- The prebuilt Jazzy package does not support <heightmap>      -->
+      <!-- collision; using mesh sidesteps geometry type [6] error.     -->
+      <!-- ============================================================ -->
+      <collision name="terrain_collision">
+        <geometry>
+          <mesh>
+            <uri>file:///home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl/materials/textures/collision_mesh.stl</uri>
+            <scale>1 1 1</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <!-- ============================================================ -->
+      <!-- Visual: heightmap PNG (Ogre2)                                -->
+      <!-- PNG must be (2^n+1)×(2^n+1) for Ogre2 heightmap renderer.  -->
+      <!-- file:// URI prevents Gazebo from attempting a PROJ           -->
+      <!-- reprojection of the Mars CRS to Earth EPSG:4326.            -->
+      <!-- ============================================================ -->
+      <visual name="terrain_visual">
+        <geometry>
+          <heightmap>
+            <uri>file:///home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl/materials/textures/heightmap.png</uri>
+            <size>500 500 39.40</size>
+            <!-- pos z=0: terrain bottom sits at world origin.            -->
+            <!-- Elevation min/max are baked into the PNG pixel range;    -->
+            <!-- absolute elevation offset is NOT applied here so the     -->
+            <!-- terrain is always visible near the world origin.         -->
+            <pos>0 0 0</pos>
+            <texture>
+              <!-- Placeholder textures — replace with hi-res Mars maps. -->
+              <diffuse>file:///home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl/materials/textures/mars_diffuse.png</diffuse>
+              <normal>file:///home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl/materials/textures/mars_normal.png</normal>
+              <size>20</size>
+            </texture>
+          </heightmap>
+        </geometry>
+      </visual>
+
+    </link>
+  </model>
+</sdf>

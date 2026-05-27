@@ -1,0 +1,8 @@
+# Mars 2020 Perseverance landing region — Jezero Crater
+# HiRISE DTMs from ASC-PDS Services (ESRI:103885, 1 m/px)
+#
+# Run `mars_terrain_exporter batch --config config/jezero_sites.yaml --output-dir ./models`
+# to regenerate all presets.
+sites:
+  - site: jezero_c
+  - site: jezero_dl

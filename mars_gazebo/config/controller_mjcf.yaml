@@ -6,7 +6,7 @@ controller_manager:
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 
-    position_controller:
+    g1_position_controller:
       type: position_controllers/JointGroupPositionController
 
     imu_broadcaster:
@@ -18,7 +18,7 @@ imu_broadcaster:
     sensor_name: imu_pelvis
     frame_id: imu_in_pelvis
     
-position_controller:
+g1_position_controller:
   ros__parameters:
     joints:
       # --- Left Leg (6) ---

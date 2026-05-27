@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<!--
+  Mars terrain world — Jezero Dl
+  Physics: Bullet Featherstone  |  step: 0.005 s (200 Hz)
+  Target: Gazebo Harmonic (gz-sim 8) + ROS 2 Jazzy
+
+  Launch:
+    gz sim -r /home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl/world.sdf
+
+  Or via ros_gz_sim:
+    ros2 launch ros_gz_sim gz_sim.launch.py \
+      gz_args:="-r /home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl/world.sdf"
+-->
+<sdf version="1.11">
+  <world name="jezero_dl_world">
+
+    <!-- ================================================================ -->
+    <!-- Physics: Bullet Featherstone                                      -->
+    <!-- ================================================================ -->
+    <physics name="bullet_featherstone_physics" type="bullet_featherstone">
+      <max_step_size>0.005</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>200</real_time_update_rate>
+    </physics>
+
+    <!-- ================================================================ -->
+    <!-- System plugins (Gazebo Harmonic)                                  -->
+    <!-- ================================================================ -->
+    <plugin
+      filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics">
+      <engine>
+        <filename>gz-physics-bullet-featherstone-plugin</filename>
+      </engine>
+    </plugin>
+
+    <plugin
+      filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands"/>
+
+    <plugin
+      filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster"/>
+
+    <plugin
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- ================================================================ -->
+    <!-- Scene: ambient + sky  (<ambient>/<background> must be inside     -->
+    <!-- <scene>, not direct children of <world> in SDF 1.11)            -->
+    <!-- ================================================================ -->
+    <scene>
+      <ambient>0.20 0.18 0.16 1</ambient>
+      <background>0.45 0.35 0.28 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- ================================================================ -->
+    <!-- Mars-like directional lighting                                    -->
+    <!-- ================================================================ -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 1000 0 0 0</pose>
+      <diffuse>0.75 0.62 0.52 1</diffuse>
+      <specular>0.15 0.12 0.10 1</specular>
+      <attenuation>
+        <range>10000</range>
+        <constant>1.0</constant>
+        <linear>0.0</linear>
+        <quadratic>0.0</quadratic>
+      </attenuation>
+      <direction>0.2 0.0 -0.98</direction>
+    </light>
+
+    <!-- ================================================================ -->
+    <!-- Terrain model — file:// URI, no GZ_SIM_RESOURCE_PATH needed     -->
+    <!-- ================================================================ -->
+    <include>
+      <uri>file:///home/sid/projects25/src/HANUMAN/mars_terrain_exporter/models/jezero_dl</uri>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
+    <!-- ================================================================ -->
+    <!-- Default GUI camera — scaled to terrain size                      -->
+    <!-- cam_y ≈ −0.8 × size_y,  cam_z ≈ 0.6 × size_y                  -->
+    <!-- ================================================================ -->
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>0 -400 300 0 0.52 1.5708</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

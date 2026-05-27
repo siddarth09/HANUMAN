@@ -1,16 +1,5 @@
 """
 HANUMAN: mujoco_ros2_control launch file for G1 29-DOF.
-
-Launches:
-  1. robot_state_publisher (URDF → /robot_description, /tf)
-  2. mujoco_ros2_control node (MuJoCo physics + ros2_control)
-  3. joint_state_broadcaster
-  4. position_controller (29 joints)
-
-Usage:
-  ros2 launch mars_gazebo mujoco.launch.py
-  ros2 launch mars_gazebo mujoco.launch.py headless:=true
-  ros2 launch mars_gazebo mujoco.launch.py sim_speed:=2.0
 """
 import os
 from launch import LaunchDescription

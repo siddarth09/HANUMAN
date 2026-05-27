@@ -1,0 +1,23 @@
+site_id: jezero_dl
+display_name: Jezero Dl
+description: "Jezero Crater \u2014 delta/fan lobe (DL tile). Ancient river delta fan\
+  \ visible to the north-west of the landing site. HiRISE DTM mosaicked with MOLA\
+  \ topography, delta geoid corrected, 1 m/px, ESRI:103885."
+coordinates:
+  lat: 18.45
+  lon: 77.4
+size_x_m: 500
+size_y_m: 500
+dem_resolution_x: 500
+dem_resolution_y: 500
+visual_heightmap_px: 257
+collision_mesh_triangles: 20000
+collision_mesh_step_m: 5.0
+elevation_min_m: -2542.27
+elevation_max_m: -2502.87
+elevation_range_m: 39.4
+source: nasa_hirise_asc_pds
+physics:
+  engine: bullet_featherstone
+  max_step_size: 0.005
+  real_time_update_rate: 200
