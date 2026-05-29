@@ -100,6 +100,14 @@ private:
     bool imu_received_ = false;
     std::unordered_map<std::string, int> joint_index_map_;
 
+    bool obs_dump_done_ = false;   // one-shot obs diagnostic on first saturation
+
+    // Warmup: don't run inference until robot has settled on the ground
+    bool warmup_done_ = false;
+    rclcpp::Time warmup_start_{0, 0, RCL_ROS_TIME};
+    double warmup_seconds_ = 5.0;
+    int last_warmup_log_ = -1;
+
     // ── ROS interfaces ──
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_joint_states_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;

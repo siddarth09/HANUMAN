@@ -262,10 +262,12 @@ void RLPolicyNode::joint_states_cb(
         if (it != joint_index_map_.end()) {
             int idx = it->second;
             if (idx < static_cast<int>(msg->position.size())) {
-                joint_positions_[j] = static_cast<float>(msg->position[idx]);
+                float p = static_cast<float>(msg->position[idx]);
+                if (std::isfinite(p)) joint_positions_[j] = p;
             }
             if (idx < static_cast<int>(msg->velocity.size())) {
-                joint_velocities_[j] = static_cast<float>(msg->velocity[idx]);
+                float v = static_cast<float>(msg->velocity[idx]);
+                if (std::isfinite(v)) joint_velocities_[j] = v;
             }
         }
     }
@@ -358,8 +360,8 @@ void RLPolicyNode::height_scan_cb(
         float y = *iter_y;
         float z = *iter_z;
 
-        // Skip invalid points
-        if (std::isnan(x) || std::isnan(y) || std::isnan(z)) {
+        // Skip invalid points (NaN or Inf — out-of-range rays return inf)
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
             height_scan_[scan_idx] = HEIGHT_SCAN_DEFAULT;
             ++scan_idx;
             continue;
@@ -392,7 +394,7 @@ void RLPolicyNode::height_scan_cb(
         for (size_t i = 0; i < n_points; ++i, ++z_iter) {
             if (i >= center_start && i < center_end) {
                 float zv = *z_iter;
-                if (!std::isnan(zv)) {
+                if (std::isfinite(zv)) {
                     sum_z += std::abs(zv);
                     ++count;
                 }
@@ -476,7 +478,37 @@ void RLPolicyNode::policy_step()
         return;
     }
 
+    // Warmup: hold for 5 s after first joint state to let the robot settle
+    // on the ground before running inference.
+    if (!warmup_done_) {
+        auto now = this->now();
+        if (warmup_start_.nanoseconds() == 0) {
+            warmup_start_ = now;
+        }
+        double elapsed = (now - warmup_start_).seconds();
+        if (elapsed < warmup_seconds_) {
+            if (static_cast<int>(elapsed) != last_warmup_log_) {
+                last_warmup_log_ = static_cast<int>(elapsed);
+                RCLCPP_INFO(this->get_logger(),
+                    "Warmup: %.0f / %.0f s — waiting for robot to settle",
+                    elapsed, warmup_seconds_);
+            }
+            return;
+        }
+        warmup_done_ = true;
+        RCLCPP_INFO(this->get_logger(), "Warmup done — starting policy inference");
+    }
+
     build_observation();
+
+    // Drop inference if any obs dim is non-finite.
+    for (int i = 0; i < OBS_DIM; ++i) {
+        if (!std::isfinite(obs_[i])) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "NaN/Inf in obs[%d]=%.3f — skipping inference", i, obs_[i]);
+            return;
+        }
+    }
 
     obs_tensor_ = Ort::Value::CreateTensor<float>(
         memory_info_, obs_.data(), OBS_DIM, obs_shape_.data(), obs_shape_.size());
@@ -488,10 +520,45 @@ void RLPolicyNode::policy_step()
 
     const float* action_data = output[0].GetTensorData<float>();
     double clip_val = this->get_parameter("action_clip").as_double();
+    float clip_f = static_cast<float>(clip_val);
+
+    // Count saturated actions — if >50% are clipped the robot is in a state
+    // the policy has never seen. Reset last_action_ to zero so it doesn't
+    // poison the next obs and break out of the feedback loop.
+    int saturated = 0;
+    for (int i = 0; i < ACT_DIM; ++i) {
+        if (std::abs(action_data[i]) >= clip_f * 0.999f) ++saturated;
+    }
+    if (saturated > ACT_DIM / 2) {
+        // One-shot diagnostic: dump the observation the first time we saturate
+        if (!obs_dump_done_) {
+            obs_dump_done_ = true;
+            RCLCPP_ERROR(this->get_logger(),
+                "=== OBS DUMP (first saturation) ===\n"
+                "  [0:3]  lin_vel  = %.4f  %.4f  %.4f\n"
+                "  [3:6]  ang_vel  = %.4f  %.4f  %.4f\n"
+                "  [6:9]  gravity  = %.4f  %.4f  %.4f\n"
+                "  [9:12] jpos_rel = %.4f  %.4f  %.4f  (hip_pitch/roll/yaw)\n"
+                "  [67:70] last_act = %.4f  %.4f  %.4f\n"
+                "  [96:99] cmd_vel  = %.4f  %.4f  %.4f\n"
+                "  [99]   scan[0]  = %.4f  [286] foot_l = %.4f  [287] foot_r = %.4f",
+                obs_[0], obs_[1], obs_[2],
+                obs_[3], obs_[4], obs_[5],
+                obs_[6], obs_[7], obs_[8],
+                obs_[9], obs_[10], obs_[11],
+                obs_[67], obs_[68], obs_[69],
+                obs_[96], obs_[97], obs_[98],
+                obs_[99], obs_[286], obs_[287]);
+        }
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+            "%d/%d actions saturated — resetting last_action to zero", saturated, ACT_DIM);
+        last_action_.fill(0.0f);
+        return;
+    }
 
     for (int i = 0; i < ACT_DIM; ++i) {
         float a = action_data[i];
-        a = std::clamp(a, static_cast<float>(-clip_val), static_cast<float>(clip_val));
+        a = std::clamp(a, -clip_f, clip_f);
         last_action_[i] = a;
     }
 

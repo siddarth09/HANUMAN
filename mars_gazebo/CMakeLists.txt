@@ -81,6 +81,7 @@ install(PROGRAMS
   scripts/policy_downloader.py
   scripts/teleop.py
   scripts/odom_tf.py
+  scripts/rl_policy_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
