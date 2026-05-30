@@ -1,0 +1,20 @@
+# HANUMAN Mars deployment sites — NASA Mars 2020 TRN HiRISE DTMs.
+# Each entry uses the site catalog shorthand. An optional `roi` block overrides
+# the default 100 m center crop at 0.1 m/px.
+#
+# Regenerate:
+#   mars_terrain_exporter batch --config config/hanuman_sites.yaml --output-dir ./models
+
+sites:
+  - site: jezero_c
+    roi:
+      size_m: 150.0
+      resolution_m: 0.1
+  - site: jezero_dl
+    roi:
+      size_m: 150.0
+      resolution_m: 0.1
+  - site: jezero_w
+    roi:
+      size_m: 150.0
+      resolution_m: 0.1

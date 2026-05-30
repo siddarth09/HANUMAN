@@ -2039,7 +2039,7 @@
       <plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
 
       
-      <param name="mujoco_model">/home/sid/projects25/install/mars_gazebo/share/mars_gazebo/unitree_g1_mjcf/mars_scene.xml</param>
+      <param name="mujoco_model">/home/sid/projects25/install/mars_gazebo/share/mars_gazebo/unitree_g1_mjcf/mars_nav_scene.xml</param>
 
       <!-- Use the standing keyframe from menagerie as initial pose -->
       <param name="initial_keyframe">stand</param>
@@ -2264,7 +2264,10 @@
       <param name="depth_topic">/d435/depth/image_raw</param>
     </sensor>
     
-    <sensor name="lidar">
+    <!-- MID360 360-deg horizontal lidar. Name MUST match the MJCF rangefinder
+         base name 'mid360' (rays mid360-000..mid360-359). The bridge derives
+         num_rangefinders = (max-min)/increment + 1 = 360 to match the replicate. -->
+    <sensor name="mid360">
       <param name="frame_name">mid360_frame</param>
       <param name="angle_increment">0.01745329</param>
       <param name="min_angle">-3.14159</param>
@@ -2273,7 +2276,46 @@
       <param name="range_max">40.0</param>
       <param name="laserscan_topic">/scan</param>
     </sensor>
-    
+
+    <!-- Downward ground-height rangefinder (1 beam) for height-above-terrain.
+         Matches the MJCF rangefinder 'ground_height-0'. Published on /ground_height. -->
+    <sensor name="ground_height">
+      <param name="frame_name">mid360_frame</param>
+      <param name="angle_increment">1.0</param>
+      <param name="min_angle">0.0</param>
+      <param name="max_angle">0.0</param>
+      <param name="range_min">0.05</param>
+      <param name="range_max">10.0</param>
+      <param name="laserscan_topic">/ground_height</param>
+    </sensor>
+
+    <!-- Foot contact: 6-axis force/torque (ground reaction through each ankle).
+         mujoco_type=fts -> reads MJCF <force> '<name>_force' + <torque> '<name>_torque'. -->
+    <sensor name="left_foot_contact">
+      <param name="mujoco_type">fts</param>
+      <param name="mujoco_sensor_name">left_foot</param>
+      <param name="force_mjcf_suffix">_force</param>
+      <param name="torque_mjcf_suffix">_torque</param>
+      <state_interface name="force.x"/>
+      <state_interface name="force.y"/>
+      <state_interface name="force.z"/>
+      <state_interface name="torque.x"/>
+      <state_interface name="torque.y"/>
+      <state_interface name="torque.z"/>
+    </sensor>
+    <sensor name="right_foot_contact">
+      <param name="mujoco_type">fts</param>
+      <param name="mujoco_sensor_name">right_foot</param>
+      <param name="force_mjcf_suffix">_force</param>
+      <param name="torque_mjcf_suffix">_torque</param>
+      <state_interface name="force.x"/>
+      <state_interface name="force.y"/>
+      <state_interface name="force.z"/>
+      <state_interface name="torque.x"/>
+      <state_interface name="torque.y"/>
+      <state_interface name="torque.z"/>
+    </sensor>
+
   </ros2_control>
 </robot>
 

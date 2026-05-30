@@ -1,0 +1,17 @@
+site_id: mars_nav_1k
+display_name: Mars Nav 1K
+description: Jezero Crater center (Mars 2020 landing ellipse)
+coordinates:
+  lat: 18.538593513226015
+  lon: 77.41620346231473
+size_x_m: 1000.0
+size_y_m: 1000.0
+resolution_m: 1.0
+resolution_x: 1000
+resolution_y: 1000
+elevation_min_m: -2527.31
+elevation_max_m: -2421.49
+elevation_range_m: 105.83
+source: nasa_hirise_ortho
+textured: true
+n_boulders: 60

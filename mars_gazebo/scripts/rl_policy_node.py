@@ -230,9 +230,20 @@ class RLPolicyNode(Node):
         self.get_logger().info(f'Loading .pt policy: {pt_path}')
         ckpt = torch.load(pt_path, map_location='cpu', weights_only=False)
         sd = ckpt['actor_state_dict']
+
+        # Auto-detect architecture from weight shapes
+        w_keys = sorted([k for k in sd if k.startswith('mlp.') and k.endswith('.weight')])
+        self.obs_dim = int(sd[w_keys[0]].shape[1])
+        self.act_dim = int(sd[w_keys[-1]].shape[0])
+        hidden = tuple(int(sd[k].shape[0]) for k in w_keys[:-1])
+
+        self.get_logger().info(
+            f'Architecture detected: obs={self.obs_dim}  '
+            f'hidden={hidden}  act={self.act_dim}')
+
         keep = {k: v for k, v in sd.items()
                 if k.startswith('mlp') or k in ('obs_normalizer._mean', 'obs_normalizer._std')}
-        actor = Actor()
+        actor = Actor(obs_dim=self.obs_dim, hidden=hidden, act_dim=self.act_dim)
         actor.load_state_dict(keep, strict=False)
         actor.eval()
         self.actor = actor.to(self.device)
@@ -288,36 +299,29 @@ class RLPolicyNode(Node):
     # ── Observation ────────────────────────────────────────────────────────────
 
     def _build_obs(self) -> np.ndarray:
-        obs = np.zeros(OBS_DIM, dtype=np.float32)
+        obs = np.zeros(self.obs_dim, dtype=np.float32)
         q = self.imu_quat
 
         # [0:3] base linear velocity in body frame
         obs[0:3] = quat_rotate_inverse(q, self.lin_vel_world)
-
         # [3:6] base angular velocity
         obs[3:6] = self.ang_vel
-
         # [6:9] projected gravity
         obs[6:9] = projected_gravity(q)
-
         # [9:38] joint positions relative to default
         obs[9:38] = self.joint_pos - DEFAULT_JOINT_POS
-
         # [38:67] joint velocities
         obs[38:67] = self.joint_vel
-
         # [67:96] last action
         obs[67:96] = self.last_action
-
         # [96:99] velocity command
         obs[96:99] = self.command
 
-        # [99:286] height scan
-        with self._lock:
-            obs[99:99 + HEIGHT_SCAN_SIZE] = self.height_scan
-
-        # [286:288] foot heights
-        obs[286:288] = self.foot_h
+        if self.obs_dim > 99:
+            # Rough terrain policy: height scan + foot heights
+            with self._lock:
+                obs[99:99 + HEIGHT_SCAN_SIZE] = self.height_scan
+            obs[286:288] = self.foot_h
 
         return obs
 
@@ -351,26 +355,12 @@ class RLPolicyNode(Node):
                 f'Non-finite obs at dims {bad[:5]} — skipping', throttle_duration_sec=2.0)
             return
 
-        # Default-pose guard: if joints are far from default the position
-        # controller hasn't settled yet — the all-zeros URDF spawn pose
-        # makes straight legs → pelvis too high → scan rays miss ground → 50+σ
-        jpos_err = float(np.abs(obs[9:38]).mean())
-        if jpos_err > self._jpos_err_thresh:
-            self.get_logger().warn(
-                f'Joints not at default (mean|jpos_rel|={jpos_err:.3f} > '
-                f'{self._jpos_err_thresh:.2f}) — waiting for position controller',
-                throttle_duration_sec=2.0)
-            return
-
         # Upright guard: only block at severe tilt (>70° = gravity_z > -0.34).
-        # Don't blank last_action on small tilts — that destabilises the policy
-        # by feeding it a discontinuous action history.
         gravity_z = float(obs[8])
-        if gravity_z > -0.34:   # ~70° tilt — robot is actually falling
+        if gravity_z > -0.34:
             self.get_logger().warn(
                 f'Robot fallen (gravity_z={gravity_z:.3f}) — skipping inference',
                 throttle_duration_sec=2.0)
-            # Don't reset last_action — let it hold the last commanded pose
             return
 
         # One-shot obs dump + saturation analysis
@@ -388,16 +378,17 @@ class RLPolicyNode(Node):
             _worst = np.argsort(np.abs(_norm))[::-1][:10]
             _worst_info = '  '.join(
                 f'obs[{i}]={obs[i]:.4f}(σ={_norm[i]:.1f})' for i in _worst)
+            scan_info = (f'  scan_avg={obs[99:286].mean():.4f}  foot={obs[286]:.4f},{obs[287]:.4f}'
+                         if self.obs_dim > 99 else '  (no height scan — flat terrain policy)')
             self.get_logger().error(
-                f'=== OBS DUMP ===\n'
+                f'=== OBS DUMP (obs_dim={self.obs_dim}) ===\n'
                 f'  lin_vel  {np.round(obs[0:3], 5)}\n'
                 f'  ang_vel  {np.round(obs[3:6], 5)}\n'
                 f'  gravity  {np.round(obs[6:9], 5)}\n'
                 f'  jpos_rel {np.round(obs[9:38], 4)}\n'
                 f'  jvel     {np.round(obs[38:67], 4)}\n'
-                f'  last_act {np.round(obs[67:96], 4)}\n'
                 f'  cmd_vel  {np.round(obs[96:99], 4)}\n'
-                f'  scan_avg={obs[99:286].mean():.4f}  foot={obs[286]:.4f},{obs[287]:.4f}\n'
+                f'{scan_info}\n'
                 f'  TOP-10 OUTLIERS (sigma from training mean):\n'
                 f'    {_worst_info}')
 
@@ -410,7 +401,7 @@ class RLPolicyNode(Node):
         clip = self.get_parameter('action_clip').get_parameter_value().double_value
         n_sat = int(np.sum(np.abs(action) >= clip * 0.999))
 
-        if n_sat > ACT_DIM // 2:
+        if n_sat >= ACT_DIM - 2:   # only block if 27+/29 — broken obs, not normal gait
             self.get_logger().warn(
                 f'{n_sat}/{ACT_DIM} actions saturated — skipping',
                 throttle_duration_sec=1.0)

@@ -1,8 +1,8 @@
 /**
  * HANUMAN — RL Policy Deployment Node (Header)
  *
- * Loads the trained ONNX locomotion policy and runs inference at 50Hz,
- * subscribing to joint states, IMU, odometry, height scan pointcloud,
+ * Loads the trained TorchScript (LibTorch) locomotion policy and runs inference
+ * at 50Hz, subscribing to joint states, IMU, odometry, height scan pointcloud,
  * and publishing joint position commands to the position_controller.
  */
 
@@ -20,11 +20,12 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
-#include <onnxruntime_cxx_api.h>
+#include <torch/script.h>
 
 namespace hanuman
 {
@@ -56,7 +57,7 @@ private:
     void imu_cb(const sensor_msgs::msg::Imu::SharedPtr msg);
     void odom_cb(const nav_msgs::msg::Odometry::SharedPtr msg);
     void cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg);
-    void height_scan_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+    void height_scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg);
 
     // ── Policy ──
     void build_observation();
@@ -65,14 +66,8 @@ private:
     // ── Height scan processing ──
     void process_height_scan(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
-    // ── ONNX Runtime ──
-    Ort::Env env_{nullptr};
-    std::unique_ptr<Ort::Session> session_;
-    Ort::MemoryInfo memory_info_{nullptr};
-    Ort::Value obs_tensor_{nullptr};
-    std::vector<int64_t> obs_shape_;
-    std::vector<const char*> input_names_;
-    std::vector<const char*> output_names_;
+    // ── LibTorch (TorchScript) policy ──
+    torch::jit::script::Module module_;
 
     // ── Observation buffer ──
     std::array<float, OBS_DIM> obs_{};
@@ -113,7 +108,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_height_scan_;
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_height_scan_;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pub_commands_;
     rclcpp::TimerBase::SharedPtr timer_;
 };

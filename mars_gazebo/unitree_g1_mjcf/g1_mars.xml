@@ -91,6 +91,11 @@
       <geom class="visual" mesh="pelvis_contour_link"/>
       <geom class="collision" mesh="pelvis_contour_link"/>
       <site name="imu_in_pelvis" size="0.01" pos="0.0 0.0 0.0"/>
+      <!-- Downward ground-height rangefinder: +Z points straight down
+           (quat 0 1 0 0 = 180 deg about X). Offset forward of the pelvis so the
+           ray clears the legs/feet and reads the terrain just ahead of the robot
+           (height-above-ground / step look-ahead). Exposed as 'ground_height'. -->
+      <site name="ground_height_ray" size="0.005" pos="0.35 0 0" quat="0 1 0 0" rgba="1 1 0 0.6" group="5"/>
 
       <!-- LEFT LEG -->
       <body name="left_hip_pitch_link" pos="0 0.064452 -0.1027">
@@ -133,6 +138,8 @@
                   <geom class="foot" pos="0.12 0.03 -0.03"/>
                   <geom class="foot" pos="0.12 -0.03 -0.03"/>
                   <site name="left_foot"/>
+                  <!-- sole zone for the touch contact sensor (covers the foot geoms) -->
+                  <site name="left_sole" type="box" pos="0.035 0 -0.03" size="0.10 0.045 0.02" rgba="1 0.5 0 0.2" group="5"/>
                 </body>
               </body>
             </body>
@@ -181,6 +188,8 @@
                   <geom class="foot" pos="0.12 0.03 -0.03"/>
                   <geom class="foot" pos="0.12 -0.03 -0.03"/>
                   <site name="right_foot"/>
+                  <!-- sole zone for the touch contact sensor (covers the foot geoms) -->
+                  <site name="right_sole" type="box" pos="0.035 0 -0.03" size="0.10 0.045 0.02" rgba="1 0.5 0 0.2" group="5"/>
                 </body>
               </body>
             </body>
@@ -213,7 +222,7 @@
             <camera name="d435" fovy="58" mode="fixed" resolution="640 480"
         pos="0.06 0.0 0.43" xyaxes="0 -1 0 0 0 1"/>
             <site name="mid360_lidar" pos="0.0002835 0.00003 0.41618" euler="0 0.04014 0" rgba="0 1 0 0.3"/>
-            
+
 
             <!-- LEFT ARM -->
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778"
@@ -400,6 +409,16 @@
                 </body>
               </body>
             </body>
+            <!-- Livox MID360 360-deg lidar ring. NOTE: a <replicate> truncates any
+                 sibling <body> that follows it, so this MUST be the torso's LAST child. -->
+            <!-- Raised above the head (torso+0.60) on a short mast so the
+                 horizontal rays clear the robot's own head/shoulders/arms. -->
+            <body name="mid360_body" pos="0.0002835 0.00003 0.60">
+              <geom type="cylinder" size="0.02 0.03" pos="0 0 -0.03" class="visual" material="black"/>
+              <replicate count="360" sep="-" euler="0 0 0.01745329">
+                <site name="mid360" size="0.005" pos="0 0 0" quat="0.7071 0 0.7071 0" rgba="0 1 0 0.2" group="5"/>
+              </replicate>
+            </body>
           </body>
         </body>
       </body>
@@ -469,6 +488,25 @@
         <framequat name="imu_torso_quat" objtype="site" objname="imu_in_torso"/>
         <gyro name="imu_torso_gyro" site="imu_in_torso" noise="5e-4" cutoff="34.9"/>
         <accelerometer name="imu_torso_accel" site="imu_in_torso" noise="1e-2" cutoff="157"/>
+
+        <!-- MID360 horizontal lidar ring (rangefinder per replicated site).
+             The 'mid360' sensor is auto-replicated to mid360-000..mid360-359. -->
+        <rangefinder name="mid360" site="mid360"/>
+
+        <!-- Downward ground-height rangefinder (1 beam) -> 'ground_height-0'. -->
+        <rangefinder name="ground_height-0" site="ground_height_ray"/>
+
+        <!-- Foot contact: 6-axis force/torque through each ankle (ground reaction).
+             mujoco_ros2_control fts looks for <name>_force + <name>_torque. -->
+        <force   name="left_foot_force"   site="left_foot"/>
+        <torque  name="left_foot_torque"  site="left_foot"/>
+        <force   name="right_foot_force"  site="right_foot"/>
+        <torque  name="right_foot_torque" site="right_foot"/>
+
+        <!-- Plain touch sensors (scalar normal force) over the sole for quick
+             contact booleans (useful for locomotion / RL gait phase). -->
+        <touch name="left_foot_touch"  site="left_sole"/>
+        <touch name="right_foot_touch" site="right_sole"/>
     </sensor>
 
   <keyframe>

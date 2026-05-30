@@ -50,7 +50,16 @@ def generate_launch_description():
     )
     
     delayed_imu = TimerAction(period=7.0, actions=[imu_spawner])
-    
+
+    ft_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['left_foot_ft_broadcaster', 'right_foot_ft_broadcaster',
+                   '--controller-manager', '/controller_manager'],
+        output='screen',
+    )
+    delayed_ft = TimerAction(period=7.0, actions=[ft_spawner])
+
     control_node = Node(
         package='mujoco_ros2_control',
         executable='ros2_control_node',
@@ -92,6 +101,6 @@ def generate_launch_description():
         control_node,
         spawn_jsb,
         spawn_pos,
-        delayed_imu
-        
+        delayed_imu,
+        delayed_ft,
     ])

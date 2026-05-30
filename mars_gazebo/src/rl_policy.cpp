@@ -8,6 +8,8 @@
 
 #include "mars_gazebo/rl_policy.hpp"
 
+#include <ATen/Parallel.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -129,6 +131,9 @@ const std::array<float, NUM_JOINTS> ACTION_SCALE = {
 RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
 {
     // ── Parameters ──
+    // `model_path` is the TorchScript .pt policy; `onnx_path` is kept as a
+    // legacy alias so existing launch files keep working.
+    this->declare_parameter<std::string>("model_path", "");
     this->declare_parameter<std::string>("onnx_path", "");
     this->declare_parameter<double>("policy_rate", 50.0);
     this->declare_parameter<double>("cmd_vel_x", 0.5);
@@ -136,51 +141,43 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
     this->declare_parameter<double>("cmd_yaw_rate", 0.0);
     this->declare_parameter<double>("action_clip", 1.0);
 
-    // ── Resolve ONNX path ──
-    std::string onnx_path = this->get_parameter("onnx_path").as_string();
+    // ── Resolve TorchScript policy path ──
+    std::string model_path = this->get_parameter("model_path").as_string();
+    if (model_path.empty()) {
+        model_path = this->get_parameter("onnx_path").as_string();  // legacy alias
+    }
 
-    if (onnx_path.empty() || !fs::exists(onnx_path)) {
+    if (model_path.empty() || !fs::exists(model_path)) {
         try {
             std::string pkg_share =
                 ament_index_cpp::get_package_share_directory("mars_gazebo");
-            onnx_path = pkg_share + "/policy/hanuman_policy.onnx";
+            model_path = pkg_share + "/policy/model_425000.pt";
         } catch (...) {
-            onnx_path = "policy/hanuman_policy.onnx";
+            model_path = "policy/hanuman_policy.pt";
         }
     }
 
-    if (!fs::exists(onnx_path)) {
+    if (!fs::exists(model_path)) {
         RCLCPP_FATAL(this->get_logger(),
-            "ONNX policy not found at: %s\n"
-            "Run download_policy.py first:\n"
-            "  python3 download_policy.py --output-dir %s",
-            onnx_path.c_str(),
-            fs::path(onnx_path).parent_path().c_str());
+            "TorchScript policy not found at: %s\n"
+            "Export it from the ONNX with:\n"
+            "  python3 scripts/export_policy_torchscript.py "
+            "--onnx policy/hanuman_policy.onnx --out policy/model_425000.pt",
+            model_path.c_str());
         throw std::runtime_error("Policy not found");
     }
 
-    // ── Load ONNX model ──
-    RCLCPP_INFO(this->get_logger(), "Loading ONNX policy: %s", onnx_path.c_str());
-
-    env_ = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "hanuman_policy");
-    Ort::SessionOptions opts;
-    opts.SetInterOpNumThreads(1);
-    opts.SetIntraOpNumThreads(2);
-    opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-
-    RCLCPP_INFO(this->get_logger(), "Using CPU execution provider");
-
-    session_ = std::make_unique<Ort::Session>(env_, onnx_path.c_str(), opts);
-    RCLCPP_INFO(this->get_logger(), "ONNX model loaded successfully");
-
-    // ── Pre-allocate ONNX tensors ──
-    memory_info_ = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    obs_shape_ = {1, OBS_DIM};
-    obs_tensor_ = Ort::Value::CreateTensor<float>(
-        memory_info_, obs_.data(), OBS_DIM, obs_shape_.data(), obs_shape_.size());
-
-    input_names_  = {"observations"};
-    output_names_ = {"actions"};
+    // ── Load TorchScript model (CPU, single-threaded, eval mode) ──
+    RCLCPP_INFO(this->get_logger(), "Loading TorchScript policy: %s", model_path.c_str());
+    at::set_num_threads(1);
+    try {
+        module_ = torch::jit::load(model_path, torch::kCPU);
+    } catch (const c10::Error & e) {
+        RCLCPP_FATAL(this->get_logger(), "Failed to load TorchScript model: %s", e.what());
+        throw std::runtime_error("Failed to load policy");
+    }
+    module_.eval();
+    RCLCPP_INFO(this->get_logger(), "TorchScript model loaded successfully (CPU)");
 
     // ── Initialize state ──
     obs_.fill(0.0f);
@@ -216,8 +213,8 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
         "/cmd_vel", 10,
         std::bind(&RLPolicyNode::cmd_vel_cb, this, std::placeholders::_1));
 
-    sub_height_scan_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/height_scan/points", qos,
+    sub_height_scan_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "/height_scan", qos,
         std::bind(&RLPolicyNode::height_scan_cb, this, std::placeholders::_1));
 
     // ── Publisher ──
@@ -326,88 +323,29 @@ void RLPolicyNode::cmd_vel_cb(const geometry_msgs::msg::Twist::SharedPtr msg)
 // ═══════════════════════════════════════════════════════════════════
 
 void RLPolicyNode::height_scan_cb(
-    const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+    const sensor_msgs::msg::LaserScan::SharedPtr msg)
 {
-    // The downward-facing LiDAR returns points in the sensor frame
-    // (height_scanner_link, fixed to pelvis). Each point's Z is negative
-    // (pointing down). The height observation = distance below robot.
-    //
-    // For now, we take the raw Z values from the pointcloud, negate them
-    // (since rays point down), clamp, and scale by 1/max_distance.
-    // The points come in scan order matching the LiDAR config (16 horizontal × 10 vertical).
-
-    const size_t n_points = msg->width * msg->height;
-
-    if (n_points == 0) {
-        return;
-    }
-
-    // Use PointCloud2 iterators for safe field access
-    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
-    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
-    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+    // height_scanner_node publishes a 187-element LaserScan whose `ranges` are
+    // the VERTICAL heights (pelvis_z - terrain_z) of the body-centered grid, in
+    // the policy's training order (mjlab GridPattern: y outer, x inner). The
+    // observation is height / max_distance (mjlab scale = 1/max_distance);
+    // missed/out-of-range rays are reported by the scanner as max_distance.
+    const size_t n = msg->ranges.size();
 
     std::lock_guard<std::mutex> lock(height_scan_mutex_);
 
-    // Fill height scan buffer from pointcloud
-    // The LiDAR returns points in sensor frame — Z is the depth (negative = below)
-    // We take the distance as |z| for each ray
-    size_t scan_idx = 0;
-    for (size_t i = 0; i < n_points && scan_idx < HEIGHT_SCAN_SIZE;
-         ++i, ++iter_x, ++iter_y, ++iter_z)
-    {
-        float x = *iter_x;
-        float y = *iter_y;
-        float z = *iter_z;
-
-        // Skip invalid points (NaN or Inf — out-of-range rays return inf)
-        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
-            height_scan_[scan_idx] = HEIGHT_SCAN_DEFAULT;
-            ++scan_idx;
-            continue;
+    for (int i = 0; i < HEIGHT_SCAN_SIZE; ++i) {
+        float h;
+        if (i < static_cast<int>(n) && std::isfinite(msg->ranges[i])) {
+            h = std::clamp(msg->ranges[i], 0.0f, MAX_RAY_DISTANCE);
+        } else {
+            h = MAX_RAY_DISTANCE;  // miss -> max (matches training miss_value)
         }
-
-        // Distance from sensor to hit point (rays point downward)
-        float dist = std::sqrt(x * x + y * y + z * z);
-        dist = std::clamp(dist, 0.0f, MAX_RAY_DISTANCE);
-
-        // Scale by 1/max_distance (matches training observation scaling)
-        height_scan_[scan_idx] = dist / MAX_RAY_DISTANCE;
-        ++scan_idx;
+        height_scan_[i] = h / MAX_RAY_DISTANCE;
     }
 
-    // Fill remaining slots with default if pointcloud has fewer points
-    for (; scan_idx < HEIGHT_SCAN_SIZE; ++scan_idx) {
-        height_scan_[scan_idx] = HEIGHT_SCAN_DEFAULT;
-    }
-
-    // Estimate foot heights from the closest-to-nadir points
-    // The center rays (roughly indices around n_points/2) point straight down
-    // For simplicity, use the average of central rays as foot height estimate
-    if (n_points >= 10) {
-        // Reset iterators — need to reconstruct
-        sensor_msgs::PointCloud2ConstIterator<float> z_iter(*msg, "z");
-        float sum_z = 0.0f;
-        size_t count = 0;
-        size_t center_start = n_points / 2 - 3;
-        size_t center_end = n_points / 2 + 3;
-        for (size_t i = 0; i < n_points; ++i, ++z_iter) {
-            if (i >= center_start && i < center_end) {
-                float zv = *z_iter;
-                if (std::isfinite(zv)) {
-                    sum_z += std::abs(zv);
-                    ++count;
-                }
-            }
-        }
-        if (count > 0) {
-            float avg_height = sum_z / static_cast<float>(count);
-            // Both feet get similar estimate from pelvis-mounted scanner
-            foot_heights_[0] = avg_height;
-            foot_heights_[1] = avg_height;
-        }
-    }
-
+    // NOTE: foot_heights_ (obs[286:288]) come from a separate per-foot scan in
+    // training; left at the nominal standing default here until that is wired.
     height_scan_received_ = true;
 }
 
@@ -510,15 +448,19 @@ void RLPolicyNode::policy_step()
         }
     }
 
-    obs_tensor_ = Ort::Value::CreateTensor<float>(
-        memory_info_, obs_.data(), OBS_DIM, obs_shape_.data(), obs_shape_.size());
-
-    auto output = session_->Run(
-        Ort::RunOptions{nullptr},
-        input_names_.data(), &obs_tensor_, 1,
-        output_names_.data(), 1);
-
-    const float* action_data = output[0].GetTensorData<float>();
+    // ── TorchScript inference (CPU, no autograd) ──
+    torch::NoGradGuard no_grad;
+    at::Tensor action_tensor;
+    try {
+        at::Tensor obs_tensor = torch::from_blob(
+            obs_.data(), {1, OBS_DIM}, torch::kFloat32);
+        action_tensor = module_.forward({obs_tensor}).toTensor().contiguous();
+    } catch (const c10::Error & e) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Inference failed: %s — skipping step", e.what());
+        return;
+    }
+    const float* action_data = action_tensor.data_ptr<float>();
     double clip_val = this->get_parameter("action_clip").as_double();
     float clip_f = static_cast<float>(clip_val);
 

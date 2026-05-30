@@ -15,38 +15,47 @@ find_package(ament_index_cpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 
 # ── ONNX Runtime ──
-find_library(ONNXRUNTIME_LIB onnxruntime
-  PATHS /usr/local/lib /usr/lib
-)
-find_path(ONNXRUNTIME_INCLUDE onnxruntime_cxx_api.h
-  PATHS /usr/local/include /usr/include
-)
-
-if(NOT ONNXRUNTIME_LIB OR NOT ONNXRUNTIME_INCLUDE)
-  message(FATAL_ERROR
-    "ONNX Runtime not found! Install with:\n"
-    "  wget https://github.com/microsoft/onnxruntime/releases/download/v1.21.1/onnxruntime-linux-x64-gpu-1.21.1.tgz\n"
-    "  tar -xzf onnxruntime-linux-x64-gpu-1.21.1.tgz\n"
-    "  sudo cp -r onnxruntime-linux-x64-gpu-1.21.1/include/* /usr/local/include/\n"
-    "  sudo cp -r onnxruntime-linux-x64-gpu-1.21.1/lib/* /usr/local/lib/\n"
-    "  sudo ldconfig"
-  )
+# ── LibTorch (TorchScript inference) ──
+# If Torch_DIR isn't set, reuse the pip-installed PyTorch's bundled libtorch
+# (its CMake config + libs ship inside the python package).
+if(NOT DEFINED Torch_DIR AND NOT DEFINED ENV{Torch_DIR})
+  execute_process(
+    COMMAND python3 -c "import torch,os;print(os.path.join(os.path.dirname(torch.__file__),'share/cmake/Torch'))"
+    OUTPUT_VARIABLE _TORCH_CMAKE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _TORCH_PY_RC)
+  if(_TORCH_PY_RC EQUAL 0 AND EXISTS "${_TORCH_CMAKE_DIR}")
+    set(Torch_DIR "${_TORCH_CMAKE_DIR}")
+  endif()
 endif()
 
-message(STATUS "ONNX Runtime lib: ${ONNXRUNTIME_LIB}")
-message(STATUS "ONNX Runtime include: ${ONNXRUNTIME_INCLUDE}")
+find_package(Torch REQUIRED)
+message(STATUS "LibTorch: ${TORCH_INSTALL_PREFIX} (flags: ${TORCH_CXX_FLAGS})")
 
 # ── rl_policy_node ──
 add_executable(rl_policy_node src/rl_policy.cpp)
 
 target_include_directories(rl_policy_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${ONNXRUNTIME_INCLUDE}
+  ${TORCH_INCLUDE_DIRS}
 )
 
 target_link_libraries(rl_policy_node
-  ${ONNXRUNTIME_LIB}
+  ${TORCH_LIBRARIES}
 )
+
+# Apply LibTorch's required ABI flag (-D_GLIBCXX_USE_CXX11_ABI=...).
+if(TORCH_CXX_FLAGS)
+  separate_arguments(_TORCH_FLAGS UNIX_COMMAND "${TORCH_CXX_FLAGS}")
+  target_compile_options(rl_policy_node PRIVATE ${_TORCH_FLAGS})
+endif()
+
+# Embed the libtorch lib dir in RPATH so the bundled torch/cuda .so resolve at
+# runtime without the user setting LD_LIBRARY_PATH.
+set_target_properties(rl_policy_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH FALSE
+  INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib"
+  INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 ament_target_dependencies(rl_policy_node
   rclcpp
@@ -82,6 +91,8 @@ install(PROGRAMS
   scripts/teleop.py
   scripts/odom_tf.py
   scripts/rl_policy_node.py
+  scripts/height_scanner_node.py
+  scripts/lidar3d_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
