@@ -83,6 +83,29 @@ def build_actor(inits: dict) -> Actor:
     return actor
 
 
+def build_actor_from_ckpt(ckpt_path: str) -> Actor:
+    """Build the Actor directly from a raw rsl_rl checkpoint (actor_state_dict).
+
+    The checkpoint stores EmpiricalNormalization as (_mean, _std); the deployed
+    normaliser is (x - _mean) / (_std + 1e-8), so div = _std + 1e-8.
+    """
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if "actor_state_dict" not in ckpt:
+        raise SystemExit(f"No 'actor_state_dict' in {ckpt_path}; "
+                         f"keys={list(ckpt.keys())}")
+    asd = ckpt["actor_state_dict"]
+    actor = Actor()
+    sd = actor.state_dict()
+    sd["mean"] = asd["obs_normalizer._mean"].reshape(1, OBS_DIM).float()
+    sd["div"] = (asd["obs_normalizer._std"].reshape(1, OBS_DIM).float() + 1e-8)
+    for idx in (0, 2, 4, 6, 8):
+        sd[f"mlp.{idx}.weight"] = asd[f"mlp.{idx}.weight"].float()
+        sd[f"mlp.{idx}.bias"] = asd[f"mlp.{idx}.bias"].float()
+    actor.load_state_dict(sd)
+    actor.eval()
+    return actor
+
+
 def verify(actor: Actor, onnx_path: str, n: int = 8, tol: float = 1e-4) -> None:
     try:
         import onnxruntime as ort
@@ -106,15 +129,27 @@ def verify(actor: Actor, onnx_path: str, n: int = 8, tol: float = 1e-4) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--onnx", default="policy/hanuman_policy.onnx")
+    ap.add_argument("--ckpt", default=None,
+                    help="Raw rsl_rl checkpoint (.pt with actor_state_dict). "
+                         "Preferred — scripts the trained policy directly.")
+    ap.add_argument("--onnx", default="policy/hanuman_policy.onnx",
+                    help="Fallback source: rebuild from ONNX weights if no --ckpt.")
     ap.add_argument("--out", default="policy/hanuman_policy.pt")
     args = ap.parse_args()
 
-    print(f"Loading ONNX initializers: {args.onnx}")
-    inits = load_onnx_initializers(args.onnx)
-    actor = build_actor(inits)
-    print("Rebuilt Actor from ONNX weights.")
-    verify(actor, args.onnx)
+    if args.ckpt:
+        print(f"Building Actor from checkpoint: {args.ckpt}")
+        actor = build_actor_from_ckpt(args.ckpt)
+        # Parity-check against the ONNX if it's available (same weights).
+        import os
+        if os.path.exists(args.onnx):
+            verify(actor, args.onnx)
+    else:
+        print(f"Loading ONNX initializers: {args.onnx}")
+        inits = load_onnx_initializers(args.onnx)
+        actor = build_actor(inits)
+        print("Rebuilt Actor from ONNX weights.")
+        verify(actor, args.onnx)
 
     scripted = torch.jit.script(actor)
     scripted.save(args.out)

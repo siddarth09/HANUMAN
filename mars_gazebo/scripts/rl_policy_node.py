@@ -1,18 +1,32 @@
 #!/usr/bin/env python3
 """
-HANUMAN RL Policy Node — Python, loads .pt directly, CUDA-aware.
+HANUMAN RL Policy Node — Python (loads .pt directly, CUDA-capable).
+
+Loads either a raw rsl_rl checkpoint (model_*.pt with actor_state_dict) OR a
+TorchScript .pt, builds the 288-dim observation, and publishes 29 joint position
+targets at the policy's trained 50 Hz.
 
 Subscribes: /joint_states, /imu_broadcaster/imu, /ground_truth/odom,
-            /cmd_vel, /height_scan/points
+            /cmd_vel, /height_scan (LaserScan, 187 vals from height_scanner_node)
 Publishes:  /g1_position_controller/commands
 
-Usage:
-    ros2 run mars_gazebo rl_policy_node.py \
+Run on CPU (works with system python3):
+    ros2 run mars_gazebo rl_policy_node.py --ros-args -p use_sim_time:=true
+
+Run on the sm_120 GPU (use a CUDA-capable torch venv; ROS must be sourced):
+    source /opt/ros/jazzy/setup.bash && source install/setup.bash
+    /home/sid/mujoco_env/bin/python \
+        install/mars_gazebo/lib/mars_gazebo/rl_policy_node.py \
         --ros-args -p use_sim_time:=true -p device:=cuda
+
+NOTE: for this small MLP, CUDA is ~the same speed as CPU (~73 vs ~82 us/step) —
+inference is never the bottleneck. CPU is the safe default.
 """
 
 import math
+import os
 import threading
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -21,21 +35,19 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from sensor_msgs.msg import JointState, Imu, PointCloud2
-from sensor_msgs_py.point_cloud2 import read_points
+from sensor_msgs.msg import JointState, Imu, LaserScan
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float64MultiArray
 
-import os
+# ─── Policy architecture (for loading a raw rsl_rl checkpoint) ────────────────
 
-# ─── Policy architecture ──────────────────────────────────────────────────────
 
 class EmpiricalNormalization(nn.Module):
     def __init__(self, dim: int):
         super().__init__()
-        self.register_buffer('_mean', torch.zeros(1, dim))
-        self.register_buffer('_std',  torch.ones(1, dim))
+        self.register_buffer("_mean", torch.zeros(1, dim))
+        self.register_buffer("_std", torch.ones(1, dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self._mean) / (self._std + 1e-8)
@@ -45,8 +57,7 @@ class Actor(nn.Module):
     def __init__(self, obs_dim=288, hidden=(1024, 512, 256, 128), act_dim=29):
         super().__init__()
         self.obs_normalizer = EmpiricalNormalization(obs_dim)
-        layers = []
-        prev = obs_dim
+        layers, prev = [], obs_dim
         for h in hidden:
             layers += [nn.Linear(prev, h), nn.ELU()]
             prev = h
@@ -57,75 +68,53 @@ class Actor(nn.Module):
         return self.mlp(self.obs_normalizer(obs))
 
 
-# ─── Joint configuration (MJLAB training order) ───────────────────────────────
+# ─── Joint config (MJLAB training order) ──────────────────────────────────────
 
 JOINT_NAMES = [
-    'left_hip_pitch_joint',       # 0
-    'left_hip_roll_joint',        # 1
-    'left_hip_yaw_joint',         # 2
-    'left_knee_joint',            # 3
-    'left_ankle_pitch_joint',     # 4
-    'left_ankle_roll_joint',      # 5
-    'right_hip_pitch_joint',      # 6
-    'right_hip_roll_joint',       # 7
-    'right_hip_yaw_joint',        # 8
-    'right_knee_joint',           # 9
-    'right_ankle_pitch_joint',    # 10
-    'right_ankle_roll_joint',     # 11
-    'waist_yaw_joint',            # 12
-    'waist_roll_joint',           # 13
-    'waist_pitch_joint',          # 14
-    'left_shoulder_pitch_joint',  # 15
-    'left_shoulder_roll_joint',   # 16
-    'left_shoulder_yaw_joint',    # 17
-    'left_elbow_joint',           # 18
-    'left_wrist_roll_joint',      # 19
-    'left_wrist_pitch_joint',     # 20
-    'left_wrist_yaw_joint',       # 21
-    'right_shoulder_pitch_joint', # 22
-    'right_shoulder_roll_joint',  # 23
-    'right_shoulder_yaw_joint',   # 24
-    'right_elbow_joint',          # 25
-    'right_wrist_roll_joint',     # 26
-    'right_wrist_pitch_joint',    # 27
-    'right_wrist_yaw_joint',      # 28
+    "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+    "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+    "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+    "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+    "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+    "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint", "left_elbow_joint", "left_wrist_roll_joint",
+    "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint",
+    "right_wrist_pitch_joint", "right_wrist_yaw_joint",
 ]
 
 DEFAULT_JOINT_POS = np.array([
-    -0.312, 0.0,   0.0,   0.669, -0.363, 0.0,
-    -0.312, 0.0,   0.0,   0.669, -0.363, 0.0,
-     0.0,   0.0,   0.0,
-     0.2,   0.2,   0.0,   0.6,   0.0,   0.0,   0.0,
-     0.2,  -0.2,   0.0,   0.6,   0.0,   0.0,   0.0,
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+    -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+    0.0, 0.0, 0.0,
+    0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
+    0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
 ], dtype=np.float32)
 
 ACTION_SCALE = np.array([
-    0.5475464629911068,   0.35066146637882434, 0.5475464629911068,
-    0.35066146637882434,  0.43857731392336724, 0.43857731392336724,
-    0.5475464629911068,   0.35066146637882434, 0.5475464629911068,
-    0.35066146637882434,  0.43857731392336724, 0.43857731392336724,
-    0.5475464629911068,   0.43857731392336724, 0.43857731392336724,
-    0.43857731392336724,  0.43857731392336724, 0.43857731392336724,
-    0.43857731392336724,  0.43857731392336724, 0.07450087032950714,
-    0.07450087032950714,  0.43857731392336724, 0.43857731392336724,
-    0.43857731392336724,  0.43857731392336724, 0.43857731392336724,
-    0.07450087032950714,  0.07450087032950714,
+    0.5475464629911068, 0.35066146637882434, 0.5475464629911068,
+    0.35066146637882434, 0.43857731392336724, 0.43857731392336724,
+    0.5475464629911068, 0.35066146637882434, 0.5475464629911068,
+    0.35066146637882434, 0.43857731392336724, 0.43857731392336724,
+    0.5475464629911068, 0.43857731392336724, 0.43857731392336724,
+    0.43857731392336724, 0.43857731392336724, 0.43857731392336724,
+    0.43857731392336724, 0.43857731392336724, 0.07450087032950714,
+    0.07450087032950714, 0.43857731392336724, 0.43857731392336724,
+    0.43857731392336724, 0.43857731392336724, 0.43857731392336724,
+    0.07450087032950714, 0.07450087032950714,
 ], dtype=np.float32)
 
-NUM_JOINTS       = 29
-OBS_DIM          = 288
-ACT_DIM          = 29
+NUM_JOINTS = 29
+OBS_DIM = 288
+ACT_DIM = 29
 HEIGHT_SCAN_SIZE = 187
 HEIGHT_SCAN_DEFAULT = 0.150467
-MAX_RAY_DIST     = 5.0
-ACTION_CLIP      = 1.0
-WARMUP_S         = 8.0
+MAX_RAY_DIST = 5.0
 
 
-# ─── Helper: quaternion rotate ─────────────────────────────────────────────────
-
-def quat_rotate_inverse(q_wxyz: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Rotate vector v from world frame to body frame (q = body→world)."""
+def quat_rotate_inverse(q_wxyz, v):
+    """Rotate v from world into body frame (q = body→world)."""
     w, x, y, z = q_wxyz
     cx, cy, cz = -x, -y, -z
     tx = 2.0 * (cy * v[2] - cz * v[1])
@@ -138,7 +127,7 @@ def quat_rotate_inverse(q_wxyz: np.ndarray, v: np.ndarray) -> np.ndarray:
     ], dtype=np.float32)
 
 
-def projected_gravity(q_wxyz: np.ndarray) -> np.ndarray:
+def projected_gravity(q_wxyz):
     w, x, y, z = q_wxyz
     return np.array([
         -2.0 * (x * z - w * y),
@@ -147,119 +136,122 @@ def projected_gravity(q_wxyz: np.ndarray) -> np.ndarray:
     ], dtype=np.float32)
 
 
-# ─── ROS2 policy node ─────────────────────────────────────────────────────────
-
 class RLPolicyNode(Node):
-
     def __init__(self):
-        super().__init__('rl_policy_node')
+        super().__init__("rl_policy_node")
 
-        # ── Parameters ──
-        self.declare_parameter('pt_path', '')
-        self.declare_parameter('policy_rate', 50.0)
-        self.declare_parameter('device', 'cuda')
-        self.declare_parameter('action_clip', ACTION_CLIP)
-        self.declare_parameter('warmup_s', WARMUP_S)
+        self.declare_parameter("model_path", "")
+        self.declare_parameter("policy_rate", 50.0)   # policy trained at 50 Hz
+        self.declare_parameter("device", "cpu")        # "cpu" or "cuda"
+        self.declare_parameter("action_clip", 1.0)
+        self.declare_parameter("warmup_s", 5.0)
 
-        device_str = self.get_parameter('device').get_parameter_value().string_value
-        if device_str == 'cuda' and not torch.cuda.is_available():
-            self.get_logger().warn('CUDA requested but not available — falling back to CPU')
-            device_str = 'cpu'
-        self.device = torch.device(device_str)
-
-        # ── Load policy ──
-        pt_path = self.get_parameter('pt_path').get_parameter_value().string_value
-        if not pt_path or not os.path.exists(pt_path):
-            from ament_index_python.packages import get_package_share_directory
-            pkg = get_package_share_directory('mars_gazebo')
-            # Default: look for the .pt next to the ONNX
-            pt_path = os.path.join(
-                os.path.expanduser('~'),
-                'logs/hanumanv1/hanuman_g1_rough/2026-05-18_21-54-17/model_425000.pt'
-            )
-        self._load_actor(pt_path)
+        self.device = self._select_device(self.get_parameter("device").value)
+        self._load_actor(self._resolve_model_path())
 
         # ── State ──
-        self.joint_pos   = np.zeros(NUM_JOINTS, dtype=np.float32)
-        self.joint_vel   = np.zeros(NUM_JOINTS, dtype=np.float32)
+        self.joint_pos = np.zeros(NUM_JOINTS, dtype=np.float32)
+        self.joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
         self.lin_vel_world = np.zeros(3, dtype=np.float32)
-        self.ang_vel     = np.zeros(3, dtype=np.float32)
-        self.imu_quat    = np.array([1., 0., 0., 0.], dtype=np.float32)  # w,x,y,z
-        self.command     = np.zeros(3, dtype=np.float32)
+        self.ang_vel = np.zeros(3, dtype=np.float32)
+        self.imu_quat = np.array([1., 0., 0., 0.], dtype=np.float32)
+        self.command = np.zeros(3, dtype=np.float32)
         self.last_action = np.zeros(ACT_DIM, dtype=np.float32)
         self.height_scan = np.full(HEIGHT_SCAN_SIZE, HEIGHT_SCAN_DEFAULT, dtype=np.float32)
-        self.foot_h      = np.array([0.047589, 0.047088], dtype=np.float32)
+        self.foot_h = np.array([0.047589, 0.047088], dtype=np.float32)
 
-        self.joint_index_map: dict[str, int] = {}
+        self.joint_index_map = {}
         self.joint_states_received = False
-        self.imu_received = False
-        self.warmup_done  = False
+        self.height_scan_received = False
+        self.warmup_done = False
         self.warmup_start = None
-        self.warmup_s     = self.get_parameter('warmup_s').get_parameter_value().double_value
-        self._jpos_err_thresh = 0.20   # mean |jpos_rel| must be below this (0.2 = ~1 std of walking joints)
-        self._lock        = threading.Lock()
-        self._obs_dumped  = False
+        self.warmup_s = self.get_parameter("warmup_s").value
+        self._last_warmup_log = -1
+        self._lock = threading.Lock()
 
-        # ── QoS ──
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.create_subscription(JointState, "/joint_states", self._js_cb, be)
+        self.create_subscription(Imu, "/imu_broadcaster/imu", self._imu_cb, be)
+        self.create_subscription(Odometry, "/ground_truth/odom", self._odom_cb, be)
+        self.create_subscription(Twist, "/cmd_vel", self._cmd_cb, 10)
+        self.create_subscription(LaserScan, "/height_scan", self._scan_cb, be)
+        self._pub = self.create_publisher(
+            Float64MultiArray, "/g1_position_controller/commands", 10)
 
-        # ── Subscribers ──
-        self.create_subscription(JointState,    '/joint_states',         self._js_cb,      be)
-        self.create_subscription(Imu,           '/imu_broadcaster/imu',  self._imu_cb,     be)
-        self.create_subscription(Odometry,      '/ground_truth/odom',    self._odom_cb,    be)
-        self.create_subscription(Twist,         '/cmd_vel',              self._cmd_cb,     10)
-        self.create_subscription(PointCloud2,   '/height_scan/points',   self._scan_cb,    be)
-
-        # ── Publisher ──
-        self._pub = self.create_publisher(Float64MultiArray,
-                                          '/g1_position_controller/commands', 10)
-
-        # ── Timer (sim-time-aware via get_clock()) ──
-        rate = self.get_parameter('policy_rate').get_parameter_value().double_value
-        period_ns = int(1e9 / rate)
-        self._timer = self.create_timer(period_ns / 1e9, self._step,
-                                        clock=self.get_clock())
-
+        rate = self.get_parameter("policy_rate").value
+        self.create_timer(1.0 / rate, self._step, clock=self.get_clock())
         self.get_logger().info(
-            f'Policy ready — {rate:.0f}Hz sim-time, device={self.device}, '
-            f'obs={OBS_DIM}, act={ACT_DIM}, warmup={self.warmup_s:.0f}s')
+            f"Policy ready — {rate:.0f} Hz, device={self.device}, "
+            f"obs={OBS_DIM}, act={ACT_DIM}, warmup={self.warmup_s:.0f}s")
 
-    # ── Model loading ──────────────────────────────────────────────────────────
+    # ── Setup helpers ──────────────────────────────────────────────────────
 
-    def _load_actor(self, pt_path: str):
-        self.get_logger().info(f'Loading .pt policy: {pt_path}')
-        ckpt = torch.load(pt_path, map_location='cpu', weights_only=False)
-        sd = ckpt['actor_state_dict']
+    def _select_device(self, requested: str) -> torch.device:
+        if requested != "cuda":
+            return torch.device("cpu")
+        if not torch.cuda.is_available():
+            self.get_logger().warn("device=cuda but CUDA unavailable — using CPU")
+            return torch.device("cpu")
+        try:  # the wheel may lack this GPU's kernels (e.g. sm_120) — test for real
+            _ = (torch.zeros(8, device="cuda") + 1).sum().item()
+            torch.cuda.synchronize()
+            self.get_logger().info(f"CUDA OK: {torch.cuda.get_device_name(0)}")
+            return torch.device("cuda")
+        except Exception as e:
+            self.get_logger().warn(
+                f"CUDA present but unusable ({str(e)[:80]}) — using CPU. "
+                f"Launch with a torch built for this GPU (e.g. "
+                f"/home/sid/mujoco_env/bin/python) for GPU inference.")
+            return torch.device("cpu")
 
-        # Auto-detect architecture from weight shapes
-        w_keys = sorted([k for k in sd if k.startswith('mlp.') and k.endswith('.weight')])
-        self.obs_dim = int(sd[w_keys[0]].shape[1])
-        self.act_dim = int(sd[w_keys[-1]].shape[0])
+    def _resolve_model_path(self) -> str:
+        p = self.get_parameter("model_path").value
+        if p and os.path.exists(p):
+            return p
+        from ament_index_python.packages import get_package_share_directory
+        share = get_package_share_directory("mars_gazebo")
+        for cand in ("model_425000.pt", "hanuman_policy.pt"):
+            fp = os.path.join(share, "policy", cand)
+            if os.path.exists(fp):
+                return fp
+        return os.path.join(share, "policy", "hanuman_policy.pt")
+
+    def _load_actor(self, path: str):
+        self.get_logger().info(f"Loading policy: {path}")
+        # Try TorchScript first; fall back to a raw rsl_rl checkpoint.
+        try:
+            m = torch.jit.load(path, map_location=self.device)
+            m.eval()
+            self.actor = m
+            self.get_logger().info("Loaded as TorchScript module")
+            return
+        except (RuntimeError, ValueError):
+            pass
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        sd = ckpt["actor_state_dict"]
+        w_keys = sorted(k for k in sd if k.startswith("mlp.") and k.endswith(".weight"))
+        obs_dim = int(sd[w_keys[0]].shape[1])
+        act_dim = int(sd[w_keys[-1]].shape[0])
         hidden = tuple(int(sd[k].shape[0]) for k in w_keys[:-1])
-
-        self.get_logger().info(
-            f'Architecture detected: obs={self.obs_dim}  '
-            f'hidden={hidden}  act={self.act_dim}')
-
         keep = {k: v for k, v in sd.items()
-                if k.startswith('mlp') or k in ('obs_normalizer._mean', 'obs_normalizer._std')}
-        actor = Actor(obs_dim=self.obs_dim, hidden=hidden, act_dim=self.act_dim)
+                if k.startswith("mlp")
+                or k in ("obs_normalizer._mean", "obs_normalizer._std")}
+        actor = Actor(obs_dim, hidden, act_dim)
         actor.load_state_dict(keep, strict=False)
         actor.eval()
         self.actor = actor.to(self.device)
-        self.get_logger().info(f'Actor loaded on {self.device}')
+        self.get_logger().info(
+            f"Loaded rsl_rl checkpoint — obs={obs_dim} hidden={hidden} act={act_dim}")
 
-    # ── Callbacks ──────────────────────────────────────────────────────────────
+    # ── Callbacks ──────────────────────────────────────────────────────────
 
     def _js_cb(self, msg: JointState):
         if not self.joint_index_map:
             for i, name in enumerate(msg.name):
-                for j, jn in enumerate(JOINT_NAMES):
-                    if name == jn:
-                        self.joint_index_map[jn] = i
+                if name in JOINT_NAMES:
+                    self.joint_index_map[name] = i
             self.get_logger().info(
-                f'Joint mapping: {len(self.joint_index_map)}/{NUM_JOINTS} found')
-
+                f"Joint mapping: {len(self.joint_index_map)}/{NUM_JOINTS} found")
         for j, jn in enumerate(JOINT_NAMES):
             idx = self.joint_index_map.get(jn)
             if idx is None:
@@ -271,139 +263,85 @@ class RLPolicyNode(Node):
         self.joint_states_received = True
 
     def _imu_cb(self, msg: Imu):
-        self.ang_vel[:] = [msg.angular_velocity.x,
-                           msg.angular_velocity.y,
+        self.ang_vel[:] = [msg.angular_velocity.x, msg.angular_velocity.y,
                            msg.angular_velocity.z]
         self.imu_quat[:] = [msg.orientation.w, msg.orientation.x,
-                             msg.orientation.y, msg.orientation.z]
-        self.imu_received = True
+                            msg.orientation.y, msg.orientation.z]
 
     def _odom_cb(self, msg: Odometry):
-        vx = msg.twist.twist.linear.x
-        vy = msg.twist.twist.linear.y
-        vz = msg.twist.twist.linear.z
-        if all(math.isfinite(v) for v in (vx, vy, vz)):
-            self.lin_vel_world[:] = [vx, vy, vz]
+        v = msg.twist.twist.linear
+        if all(math.isfinite(c) for c in (v.x, v.y, v.z)):
+            self.lin_vel_world[:] = [v.x, v.y, v.z]
 
     def _cmd_cb(self, msg: Twist):
         self.command[:] = [msg.linear.x, msg.linear.y, msg.angular.z]
 
-    def _scan_cb(self, msg: PointCloud2):
-        # Training used frame_z - hit_z for each grid point on flat terrain,
-        # which equals robot_height / max_distance ≈ 0.15 = HEIGHT_SCAN_DEFAULT.
-        # Rather than fighting Gazebo's LiDAR frame conventions, we use the
-        # constant default (= training mean, 0 normalised sigma) for flat terrain.
-        # On rough terrain, actual ray distances can replace this.
-        pass  # height_scan stays at HEIGHT_SCAN_DEFAULT (set at init)
+    def _scan_cb(self, msg: LaserScan):
+        # height_scanner_node publishes 187 vertical heights (pelvis_z - terrain_z)
+        # in mjlab grid order; obs = height / max_distance (miss -> max).
+        n = min(len(msg.ranges), HEIGHT_SCAN_SIZE)
+        r = np.asarray(msg.ranges[:n], dtype=np.float32)
+        r = np.where(np.isfinite(r), np.clip(r, 0.0, MAX_RAY_DIST), MAX_RAY_DIST)
+        with self._lock:
+            self.height_scan[:n] = r / MAX_RAY_DIST
+            if n < HEIGHT_SCAN_SIZE:
+                self.height_scan[n:] = 1.0
+        self.height_scan_received = True
 
-    # ── Observation ────────────────────────────────────────────────────────────
+    # ── Observation + step ───────────────────────────────────────────────────
 
     def _build_obs(self) -> np.ndarray:
-        obs = np.zeros(self.obs_dim, dtype=np.float32)
+        obs = np.zeros(OBS_DIM, dtype=np.float32)
         q = self.imu_quat
-
-        # [0:3] base linear velocity in body frame
         obs[0:3] = quat_rotate_inverse(q, self.lin_vel_world)
-        # [3:6] base angular velocity
         obs[3:6] = self.ang_vel
-        # [6:9] projected gravity
         obs[6:9] = projected_gravity(q)
-        # [9:38] joint positions relative to default
         obs[9:38] = self.joint_pos - DEFAULT_JOINT_POS
-        # [38:67] joint velocities
         obs[38:67] = self.joint_vel
-        # [67:96] last action
         obs[67:96] = self.last_action
-        # [96:99] velocity command
         obs[96:99] = self.command
-
-        if self.obs_dim > 99:
-            # Rough terrain policy: height scan + foot heights
-            with self._lock:
-                obs[99:99 + HEIGHT_SCAN_SIZE] = self.height_scan
-            obs[286:288] = self.foot_h
-
+        with self._lock:
+            obs[99:99 + HEIGHT_SCAN_SIZE] = self.height_scan
+        obs[286:288] = self.foot_h
         return obs
-
-    # ── Policy step ────────────────────────────────────────────────────────────
 
     def _step(self):
         if not self.joint_states_received:
             return
 
-        # Warmup
         now = self.get_clock().now()
         if not self.warmup_done:
             if self.warmup_start is None:
                 self.warmup_start = now
             elapsed = (now - self.warmup_start).nanoseconds * 1e-9
             if elapsed < self.warmup_s:
-                if int(elapsed) % 1 == 0:
+                if int(elapsed) != self._last_warmup_log:
+                    self._last_warmup_log = int(elapsed)
                     self.get_logger().info(
-                        f'Warmup {elapsed:.0f}/{self.warmup_s:.0f}s',
-                        throttle_duration_sec=1.0)
+                        f"Warmup {elapsed:.0f}/{self.warmup_s:.0f}s — settling")
                 return
             self.warmup_done = True
-            self.get_logger().info('Warmup done — policy inference active')
+            if not self.height_scan_received:
+                self.get_logger().warn(
+                    "No /height_scan yet — run height_scanner_node.py "
+                    "(obs[99:286] is using the flat-terrain default)")
+            self.get_logger().info("Warmup done — policy inference active")
 
         obs = self._build_obs()
-
-        # NaN/Inf guard
         if not np.all(np.isfinite(obs)):
-            bad = np.where(~np.isfinite(obs))[0]
-            self.get_logger().warn(
-                f'Non-finite obs at dims {bad[:5]} — skipping', throttle_duration_sec=2.0)
+            self.get_logger().warn("Non-finite obs — skipping",
+                                   throttle_duration_sec=2.0)
             return
 
-        # Upright guard: only block at severe tilt (>70° = gravity_z > -0.34).
-        gravity_z = float(obs[8])
-        if gravity_z > -0.34:
-            self.get_logger().warn(
-                f'Robot fallen (gravity_z={gravity_z:.3f}) — skipping inference',
-                throttle_duration_sec=2.0)
-            return
-
-        # One-shot obs dump + saturation analysis
-        if not self._obs_dumped:
-            self._obs_dumped = True
-            import torch as _torch
-            # Load normalizer stats for sigma analysis
-            _ckpt = _torch.load(
-                self.get_parameter('pt_path').get_parameter_value().string_value,
-                map_location='cpu', weights_only=False)
-            _mean = _ckpt['actor_state_dict']['obs_normalizer._mean'].numpy().flatten()
-            _std  = _ckpt['actor_state_dict']['obs_normalizer._std'].numpy().flatten()
-            _norm = (obs - _mean) / (_std + 1e-8)
-            # Find the most out-of-distribution dims
-            _worst = np.argsort(np.abs(_norm))[::-1][:10]
-            _worst_info = '  '.join(
-                f'obs[{i}]={obs[i]:.4f}(σ={_norm[i]:.1f})' for i in _worst)
-            scan_info = (f'  scan_avg={obs[99:286].mean():.4f}  foot={obs[286]:.4f},{obs[287]:.4f}'
-                         if self.obs_dim > 99 else '  (no height scan — flat terrain policy)')
-            self.get_logger().error(
-                f'=== OBS DUMP (obs_dim={self.obs_dim}) ===\n'
-                f'  lin_vel  {np.round(obs[0:3], 5)}\n'
-                f'  ang_vel  {np.round(obs[3:6], 5)}\n'
-                f'  gravity  {np.round(obs[6:9], 5)}\n'
-                f'  jpos_rel {np.round(obs[9:38], 4)}\n'
-                f'  jvel     {np.round(obs[38:67], 4)}\n'
-                f'  cmd_vel  {np.round(obs[96:99], 4)}\n'
-                f'{scan_info}\n'
-                f'  TOP-10 OUTLIERS (sigma from training mean):\n'
-                f'    {_worst_info}')
-
-        # Inference
         with torch.no_grad():
             obs_t = torch.from_numpy(obs).unsqueeze(0).to(self.device)
-            act_t = self.actor(obs_t)
-            action = act_t.squeeze(0).cpu().numpy()
+            action = self.actor(obs_t).squeeze(0).float().cpu().numpy()
 
-        clip = self.get_parameter('action_clip').get_parameter_value().double_value
+        clip = self.get_parameter("action_clip").value
         n_sat = int(np.sum(np.abs(action) >= clip * 0.999))
-
-        if n_sat >= ACT_DIM - 2:   # only block if 27+/29 — broken obs, not normal gait
+        if n_sat > ACT_DIM // 2:
             self.get_logger().warn(
-                f'{n_sat}/{ACT_DIM} actions saturated — skipping',
+                f"{n_sat}/{ACT_DIM} actions saturated — resetting last_action",
                 throttle_duration_sec=1.0)
             self.last_action[:] = 0.0
             return
@@ -411,9 +349,8 @@ class RLPolicyNode(Node):
         action = np.clip(action, -clip, clip)
         self.last_action[:] = action
 
-        targets = DEFAULT_JOINT_POS + action * ACTION_SCALE
         msg = Float64MultiArray()
-        msg.data = targets.tolist()
+        msg.data = (DEFAULT_JOINT_POS + action * ACTION_SCALE).tolist()
         self._pub.publish(msg)
 
 
@@ -422,12 +359,13 @@ def main():
     node = RLPolicyNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

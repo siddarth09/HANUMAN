@@ -409,16 +409,9 @@
                 </body>
               </body>
             </body>
-            <!-- Livox MID360 360-deg lidar ring. NOTE: a <replicate> truncates any
-                 sibling <body> that follows it, so this MUST be the torso's LAST child. -->
-            <!-- Raised above the head (torso+0.60) on a short mast so the
-                 horizontal rays clear the robot's own head/shoulders/arms. -->
-            <body name="mid360_body" pos="0.0002835 0.00003 0.60">
-              <geom type="cylinder" size="0.02 0.03" pos="0 0 -0.03" class="visual" material="black"/>
-              <replicate count="360" sep="-" euler="0 0 0.01745329">
-                <site name="mid360" size="0.005" pos="0 0 0" quat="0.7071 0 0.7071 0" rgba="0 1 0 0.2" group="5"/>
-              </replicate>
-            </body>
+            <!-- (Removed the in-sim 360-beam MID360 rangefinder ring: it cost
+                 ~99% of every sim step and is superseded by lidar3d_node.py,
+                 which ray-casts a 3D cloud from the `mid360_lidar` site.) -->
           </body>
         </body>
       </body>
@@ -489,11 +482,8 @@
         <gyro name="imu_torso_gyro" site="imu_in_torso" noise="5e-4" cutoff="34.9"/>
         <accelerometer name="imu_torso_accel" site="imu_in_torso" noise="1e-2" cutoff="157"/>
 
-        <!-- MID360 horizontal lidar ring (rangefinder per replicated site).
-             The 'mid360' sensor is auto-replicated to mid360-000..mid360-359. -->
-        <rangefinder name="mid360" site="mid360"/>
-
-        <!-- Downward ground-height rangefinder (1 beam) -> 'ground_height-0'. -->
+        <!-- Downward ground-height rangefinder (1 beam) -> 'ground_height-0'.
+             (The 360-beam mid360 ring was removed — see lidar3d_node.py for 3D.) -->
         <rangefinder name="ground_height-0" site="ground_height_ray"/>
 
         <!-- Foot contact: 6-axis force/torque through each ankle (ground reaction).

@@ -2264,18 +2264,8 @@
       <param name="depth_topic">/d435/depth/image_raw</param>
     </sensor>
     
-    <!-- MID360 360-deg horizontal lidar. Name MUST match the MJCF rangefinder
-         base name 'mid360' (rays mid360-000..mid360-359). The bridge derives
-         num_rangefinders = (max-min)/increment + 1 = 360 to match the replicate. -->
-    <sensor name="mid360">
-      <param name="frame_name">mid360_frame</param>
-      <param name="angle_increment">0.01745329</param>
-      <param name="min_angle">-3.14159</param>
-      <param name="max_angle">3.14159</param>
-      <param name="range_min">0.1</param>
-      <param name="range_max">40.0</param>
-      <param name="laserscan_topic">/scan</param>
-    </sensor>
+    <!-- (MID360 2D ring removed from the MJCF — it dominated sim cost. Use the
+         standalone lidar3d_node.py for a 3D /mid360/points cloud instead.) -->
 
     <!-- Downward ground-height rangefinder (1 beam) for height-above-terrain.
          Matches the MJCF rangefinder 'ground_height-0'. Published on /ground_height. -->

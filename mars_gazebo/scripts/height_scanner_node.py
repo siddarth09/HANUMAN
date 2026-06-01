@@ -33,7 +33,9 @@ from ament_index_python.packages import get_package_share_directory
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Header
 
 # Training grid (mjlab terrain_scan): size (length_x, width_y), resolution.
 GRID_SIZE = (1.6, 1.0)
@@ -95,11 +97,16 @@ class HeightScanner(Node):
         self.sub_odom = self.create_subscription(
             Odometry, self.get_parameter("odom_topic").value, self._odom_cb, qos)
         self.pub = self.create_publisher(LaserScan, "/height_scan", 10)
+        # Debug cloud for RViz (RELIABLE so RViz shows it with default settings).
+        # Points are the grid hits in the pelvis frame: (gx, gy, -height).
+        self.cloud_pub = self.create_publisher(PointCloud2, "/height_scan/cloud", 10)
 
         rate = float(self.get_parameter("publish_rate").value)
         self.timer = self.create_timer(1.0 / rate, self._tick)
-        self.get_logger().info(f"Height scanner ready — {rate:.0f} Hz, "
-                               f"terrain-only raycast, publishing /height_scan")
+        self.get_logger().info(
+            f"Height scanner ready — {rate:.0f} Hz, terrain-only raycast, "
+            f"publishing /height_scan (LaserScan, for policy) + "
+            f"/height_scan/cloud (PointCloud2, for RViz)")
 
     def _odom_cb(self, msg: Odometry):
         p = msg.pose.pose.position
@@ -117,6 +124,7 @@ class HeightScanner(Node):
         c, s = math.cos(self._yaw), math.sin(self._yaw)
         vec = np.array([0.0, 0.0, -1.0], dtype=np.float64)
         ranges = [0.0] * self._n
+        cloud_pts = []
         geomid = np.zeros(1, dtype=np.int32)
         for k in range(self._n):
             gx, gy = self._offsets[k]
@@ -129,6 +137,8 @@ class HeightScanner(Node):
             # dist (vertical) == pelvis_z - terrain_z; miss -> max distance
             h = dist if dist >= 0.0 else MAX_DISTANCE
             ranges[k] = float(np.clip(h, 0.0, MAX_DISTANCE))
+            if dist >= 0.0:  # only real hits go in the debug cloud
+                cloud_pts.append((float(gx), float(gy), -float(h)))
 
         msg = LaserScan()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -143,17 +153,26 @@ class HeightScanner(Node):
         msg.ranges = ranges
         self.pub.publish(msg)
 
+        # Debug cloud: the 187 grid hits as 3D points in the pelvis frame, so you
+        # can SEE the height scan in RViz (PointCloud2 display, Fixed Frame=pelvis).
+        header = Header()
+        header.stamp = msg.header.stamp
+        header.frame_id = "pelvis"
+        self.cloud_pub.publish(
+            point_cloud2.create_cloud_xyz32(header, cloud_pts))
+
 
 def main():
     rclpy.init()
     node = HeightScanner()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

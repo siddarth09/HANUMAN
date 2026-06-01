@@ -151,7 +151,10 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
         try {
             std::string pkg_share =
                 ament_index_cpp::get_package_share_directory("mars_gazebo");
-            model_path = pkg_share + "/policy/model_425000.pt";
+            // NOTE: this must be a TorchScript file. The raw rsl_rl checkpoint
+            // (e.g. model_425000.pt) is NOT loadable by torch::jit — script it
+            // first with scripts/export_policy_torchscript.py --ckpt.
+            model_path = pkg_share + "/policy/hanuman_policy.pt";
         } catch (...) {
             model_path = "policy/hanuman_policy.pt";
         }
@@ -160,9 +163,9 @@ RLPolicyNode::RLPolicyNode() : Node("rl_policy_node")
     if (!fs::exists(model_path)) {
         RCLCPP_FATAL(this->get_logger(),
             "TorchScript policy not found at: %s\n"
-            "Export it from the ONNX with:\n"
+            "Script it from the trained checkpoint with:\n"
             "  python3 scripts/export_policy_torchscript.py "
-            "--onnx policy/hanuman_policy.onnx --out policy/model_425000.pt",
+            "--ckpt policy/model_425000.pt --out policy/hanuman_policy.pt",
             model_path.c_str());
         throw std::runtime_error("Policy not found");
     }
