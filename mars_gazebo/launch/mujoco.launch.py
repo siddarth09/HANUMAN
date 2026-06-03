@@ -16,6 +16,9 @@ def generate_launch_description():
     # Paths
     urdf_file = os.path.join(pkg_share, 'unitree_g1', 'g1_mujoco.urdf')
     mjcf_file = os.path.join(pkg_share, 'unitree_g1_mjcf', 'g1_mars.xml')
+    # Full deployment scene (terrain + G1) that the sim loads — the height
+    # scanner ray-casts this same scene's terrain.
+    scene_file = os.path.join(pkg_share, 'unitree_g1_mjcf', 'mars_nav_scene.xml')
     controllers_file = os.path.join(pkg_share, 'config', 'controller_mjcf.yaml')
 
     # Read URDF for robot_state_publisher
@@ -70,6 +73,19 @@ def generate_launch_description():
         output='screen',
     )
 
+    # Height scanner: reproduces the policy's 187-pt terrain_scan obs by
+    # ray-casting the MuJoCo scene from the live /ground_truth/odom pose.
+    # Publishes /height_scan (required by the RL policy node).
+    height_scanner = Node(
+        package='mars_gazebo',
+        executable='height_scanner_node.py',
+        parameters=[{
+            'use_sim_time': True,
+            'scene_path': scene_file,
+        }],
+        output='screen',
+    )
+
     # Spawn controllers (with delay to let controller manager start)
     spawn_jsb = TimerAction(
         period=2.0,
@@ -99,6 +115,7 @@ def generate_launch_description():
         sim_speed_arg,
         robot_state_publisher,
         control_node,
+        height_scanner,
         spawn_jsb,
         spawn_pos,
         delayed_imu,

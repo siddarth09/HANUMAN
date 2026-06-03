@@ -39,6 +39,7 @@ from sensor_msgs.msg import JointState, Imu, LaserScan
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float64MultiArray
+from ament_index_python.packages import get_package_share_directory
 
 # ─── Policy architecture (for loading a raw rsl_rl checkpoint) ────────────────
 
@@ -140,9 +141,9 @@ class RLPolicyNode(Node):
     def __init__(self):
         super().__init__("rl_policy_node")
 
-        self.declare_parameter("model_path", "")
+        self.declare_parameter("model_path", "/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_425000.pt")
         self.declare_parameter("policy_rate", 50.0)   # policy trained at 50 Hz
-        self.declare_parameter("device", "cpu")        # "cpu" or "cuda"
+        self.declare_parameter("device", "cuda")        # "cpu" or "cuda"
         self.declare_parameter("action_clip", 1.0)
         self.declare_parameter("warmup_s", 5.0)
 
@@ -192,7 +193,7 @@ class RLPolicyNode(Node):
         if not torch.cuda.is_available():
             self.get_logger().warn("device=cuda but CUDA unavailable — using CPU")
             return torch.device("cpu")
-        try:  # the wheel may lack this GPU's kernels (e.g. sm_120) — test for real
+        try:  
             _ = (torch.zeros(8, device="cuda") + 1).sum().item()
             torch.cuda.synchronize()
             self.get_logger().info(f"CUDA OK: {torch.cuda.get_device_name(0)}")
@@ -208,7 +209,7 @@ class RLPolicyNode(Node):
         p = self.get_parameter("model_path").value
         if p and os.path.exists(p):
             return p
-        from ament_index_python.packages import get_package_share_directory
+     
         share = get_package_share_directory("mars_gazebo")
         for cand in ("model_425000.pt", "hanuman_policy.pt"):
             fp = os.path.join(share, "policy", cand)

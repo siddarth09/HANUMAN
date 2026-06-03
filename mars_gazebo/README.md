@@ -14,7 +14,9 @@ colcon build --packages-select mars_gazebo
 source install/setup.bash
 ```
 
-LibTorch comes from the pip `torch` install (CMake finds it automatically).
+This is a Python-only package (`ament_cmake` installing the node scripts) — no
+C++ build, no LibTorch dependency. `torch` is needed only at runtime for the
+policy node.
 
 ## Layout
 
@@ -29,8 +31,9 @@ LibTorch comes from the pip `torch` install (CMake finds it automatically).
   points at `mars_nav_scene.xml`.
 - `config/controller_mjcf.yaml` — controllers (joint group position, JSB, IMU,
   foot FT broadcasters).
-- `policy/hanuman_policy.pt` — **TorchScript** policy the C++ node loads.
-  `policy/model_425000.pt` is the raw rsl_rl checkpoint (NOT loadable directly).
+- `policy/model_425000.pt` — raw rsl_rl checkpoint the policy node loads directly.
+  `policy/hanuman_policy.pt` is the TorchScript fallback (used if the checkpoint
+  is absent).
 
 ## Run the RL policy (step by step)
 
@@ -51,7 +54,7 @@ ros2 run mars_gazebo height_scanner_node.py
 
 **3. Policy node** (50 Hz; waits 5 s warmup after first `/joint_states`):
 
-Python (recommended — loads the raw `model_425000.pt` directly, CPU or GPU):
+Loads the raw `model_425000.pt` directly (CPU or GPU):
 ```bash
 # CPU (works with system python3):
 ros2 run mars_gazebo rl_policy_node.py --ros-args -p use_sim_time:=true
@@ -61,11 +64,7 @@ ros2 run mars_gazebo rl_policy_node.py --ros-args -p use_sim_time:=true
     install/mars_gazebo/lib/mars_gazebo/rl_policy_node.py \
     --ros-args -p use_sim_time:=true -p device:=cuda
 ```
-C++ alternative (loads the TorchScript `hanuman_policy.pt`):
-```bash
-ros2 run mars_gazebo rl_policy_node
-```
-Either prints "Policy ready — 50 Hz …". CUDA ≈ CPU speed here (~73 vs ~82 µs);
+Prints "Policy ready — 50 Hz …". CUDA ≈ CPU speed here (~73 vs ~82 µs);
 inference is never the bottleneck, so CPU is the safe default.
 
 **4. Send a velocity command** (vx, vy, yaw-rate):
@@ -75,14 +74,16 @@ ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
 ```
 
 ### Use a different / freshly trained policy
-The node loads a **TorchScript** `.pt`. Convert an rsl_rl checkpoint first:
+Point the node at any rsl_rl checkpoint or TorchScript `.pt`:
+```bash
+ros2 run mars_gazebo rl_policy_node.py \
+    --ros-args -p use_sim_time:=true -p model_path:=/abs/path/policy.pt
+```
+To produce a TorchScript `.pt` from a checkpoint (e.g. for other LibTorch
+consumers):
 ```bash
 python3 scripts/export_policy_torchscript.py \
     --ckpt policy/model_425000.pt --out policy/hanuman_policy.pt
-```
-Or point the node at any TorchScript:
-```bash
-ros2 run mars_gazebo rl_policy_node --ros-args -p model_path:=/abs/path/policy.pt
 ```
 
 ## Optional — 3D LiDAR for elevation mapping
