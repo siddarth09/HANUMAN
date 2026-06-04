@@ -56,6 +56,16 @@ from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
+from .mars_dem_terrain import mars_dem
+
+
+# Real HiRISE DEM exported by mars_terrain_exporter (Jezero Crater center).
+# 200x200 px @ 1.0 m/px, elevation span 31.45 m.
+MARS_DEM_FILE = (
+    "/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/"
+    "mars_nav_200/mars_nav_200.png"
+)
+
 
 # =============================================================================
 # MARS TERRAIN CONFIGURATION
@@ -81,16 +91,20 @@ MARS_TERRAINS_CFG = TerrainGeneratorCfg(
             noise_step=0.04,
         ),
 
-        # 15% slopes — crater walls, hillsides
+        # Slopes — crater walls, hillsides. hanumanv2: cap at 0.5 (~27 deg).
+        # 0.8 (~38 deg) is near-unlearnable for the G1, so the top curriculum
+        # rows never get mastered and slope skill stalls; 27 deg is challenging
+        # but achievable and above any realistic Mars traverse grade. Real steep
+        # crater-wall practice still comes from the mars_dem windows below.
         "hf_pyramid_slope": hf_pyramid_slope(
-            proportion=0.20,
-            slope_range=(0.0, 0.8),  # Up to ~38 degrees
+            proportion=0.25,
+            slope_range=(0.0, 0.5),  # Up to ~27 degrees
         ),
 
-        # 10% inverted slopes — descending into craters
+        # Inverted slopes — descending into craters
         "hf_pyramid_slope_inv": hf_pyramid_slope_inv(
             proportion=0.20,
-            slope_range=(0.0, 0.8),
+            slope_range=(0.0, 0.5),
         ),
         # # 10% stairs — layered rock formations
         # "pyramid_stairs": pyramid_stairs(
@@ -101,8 +115,17 @@ MARS_TERRAINS_CFG = TerrainGeneratorCfg(
 
         # 5% perlin noise — organic terrain variation
         "perlin_noise": perlin_noise(
-            proportion=0.40,
+            proportion=0.20,
             height_range=(0.0, 0.6),
+        ),
+
+        # Real Jezero Crater DEM windows — curriculum picks flat floor -> crater wall
+        "mars_dem": mars_dem(
+            proportion=0.30,
+            dem_file=MARS_DEM_FILE,
+            elevation_range_m=31.45,
+            dem_resolution_m=1.0,
+            vertical_exaggeration=1.0,
         ),
     },
     add_lights=True,
@@ -647,6 +670,7 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
                 iterations=10,
                 ls_iterations=20,
                 ccd_iterations=500,
+                gravity=(0.0, 0.0, -3.72),  # Mars surface gravity (vs Earth -9.81)
             ),
         ),
         decimation=4,

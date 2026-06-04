@@ -30,6 +30,8 @@ setup(
         'console_scripts': [
             'ekf_node = state_estimation.ekf_node:main',
             'leg_odom_node = state_estimation.leg_odom_node:main',
+            'validation_node = state_estimation.validation_node:main',
+            'plot_validation = state_estimation.plot_validation:main',
         ],
     },
 )

@@ -41,12 +41,8 @@ class LegOdometry:
     RIGHT_FOOT_FRAME = 'right_ankle_roll_link'
 
     def __init__(self, urdf_path: str,
-                 contact_effort_threshold: float = 5.0):
-        """
-        Args:
-            urdf_path: path to G1 URDF with floating base joint
-            contact_effort_threshold: |ankle_pitch effort| > this → contact (N·m)
-        """
+                 force_contact_threshold: float = 30.0):
+    
       
         self.model = pin.buildModelFromUrdf(urdf_path, pin.JointModelFreeFlyer())
         self.data = self.model.createData()
@@ -72,10 +68,8 @@ class LegOdometry:
 
        
         self._js_mapping_built = False
-        self._left_js_to_pin = []   
+        self._left_js_to_pin = []
         self._right_js_to_pin = []
-        self._left_ankle_effort_idx = None
-        self._right_ankle_effort_idx = None
 
         # ---- Pinocchio config vectors ----
        
@@ -85,8 +79,8 @@ class LegOdometry:
        
         self._nv_joints = self.model.nv - 6
 
-        self.contact_effort_threshold = contact_effort_threshold
-        logger.info(f"Contact threshold: {contact_effort_threshold} N·m")
+        self.force_contact_threshold = force_contact_threshold
+        logger.info(f"Contact threshold: {force_contact_threshold} N (foot Fz)")
 
     def build_joint_mapping(self, js_names: list):
        
@@ -108,44 +102,33 @@ class LegOdometry:
             else:
                 logger.warning(f"Right leg joint '{jname}' mapping failed")
 
-        self._left_ankle_effort_idx = js_name_to_idx.get(
-            'left_ankle_pitch_joint', None)
-        self._right_ankle_effort_idx = js_name_to_idx.get(
-            'right_ankle_pitch_joint', None)
-
         self._js_mapping_built = True
         logger.info(f"Joint mapping built: L={len(self._left_js_to_pin)} "
                     f"R={len(self._right_js_to_pin)} joints mapped")
 
-    def detect_contact(self, effort: np.ndarray) -> Tuple[bool, bool]:
-      
-        left = False
-        right = False
-        if self._left_ankle_effort_idx is not None:
-            left = abs(effort[self._left_ankle_effort_idx]) > self.contact_effort_threshold
-        if self._right_ankle_effort_idx is not None:
-            right = abs(effort[self._right_ankle_effort_idx]) > self.contact_effort_threshold
+    def detect_contact(self, fz_left: float, fz_right: float) -> Tuple[bool, bool]:
+        
+        left = abs(fz_left) > self.force_contact_threshold
+        right = abs(fz_right) > self.force_contact_threshold
         return left, right
 
-    def compute_velocity(self, js_position: np.ndarray, 
+    def compute_velocity(self, js_position: np.ndarray,
                          js_velocity: np.ndarray,
-                         js_effort: np.ndarray,
+                         left_contact: bool,
+                         right_contact: bool,
                          R_body_to_world: np.ndarray,
                          omega_body: np.ndarray
                          ) -> Tuple[Optional[np.ndarray], float]:
-       
+
         if not self._js_mapping_built:
             logger.warning("Joint mapping not built yet, call build_joint_mapping()")
             return None, 0.0
 
-        # ---- Contact detection ----
-        left_contact, right_contact = self.detect_contact(js_effort)
+        
         if not left_contact and not right_contact:
             return None, 0.0
 
-        # ---- Fill Pinocchio vectors ----
-        # Base stays at identity (q[0:7] = neutral, v[0:6] = 0)
-        # Only fill joint positions and velocities
+        
         for js_idx, pq, pv in self._left_js_to_pin:
             self.q_pin[pq] = js_position[js_idx]
             self.v_pin[pv] = js_velocity[js_idx]
@@ -206,13 +189,15 @@ class LegOdometry:
 
         return v_body_world
 
-    def get_measurement_for_ekf(self, js_position, js_velocity, js_effort,
+    def get_measurement_for_ekf(self, js_position, js_velocity,
+                                left_contact, right_contact,
                                 R_body_to_world, omega_body,
                                 base_noise=0.05
                                 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Returns (15-element measurement, noise) for EKF update, or (None, None)."""
         v_world, confidence = self.compute_velocity(
-            js_position, js_velocity, js_effort, R_body_to_world, omega_body)
+            js_position, js_velocity, left_contact, right_contact,
+            R_body_to_world, omega_body)
 
         if v_world is None:
             return None, None

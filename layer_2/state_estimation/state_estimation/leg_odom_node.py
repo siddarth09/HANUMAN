@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, Imu
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TwistWithCovarianceStamped
+from geometry_msgs.msg import WrenchStamped
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -18,18 +18,24 @@ class LegOdomNode(Node):
 
         # ---- Parameters ----
         self.declare_parameter('urdf_path', '')
-        self.declare_parameter('contact_effort_threshold', 5.0)
+        self.declare_parameter('force_contact_threshold', 30.0)  # N, foot Fz
         self.declare_parameter('base_noise', 0.05)
         self.declare_parameter('imu_topic', '/imu_broadcaster/imu')
         self.declare_parameter('joint_states_topic', '/joint_states')
         self.declare_parameter('output_topic', '/leg_odometry')
+        self.declare_parameter('left_wrench_topic',
+                               '/left_foot_ft_broadcaster/wrench')
+        self.declare_parameter('right_wrench_topic',
+                               '/right_foot_ft_broadcaster/wrench')
 
         urdf_path = self.get_parameter('urdf_path').value
-        threshold = self.get_parameter('contact_effort_threshold').value
+        threshold = self.get_parameter('force_contact_threshold').value
         self.base_noise = self.get_parameter('base_noise').value
         imu_topic = self.get_parameter('imu_topic').value
         js_topic = self.get_parameter('joint_states_topic').value
         out_topic = self.get_parameter('output_topic').value
+        left_wrench_topic = self.get_parameter('left_wrench_topic').value
+        right_wrench_topic = self.get_parameter('right_wrench_topic').value
 
         if not urdf_path:
             self.get_logger().fatal("urdf_path parameter is required!")
@@ -43,11 +49,19 @@ class LegOdomNode(Node):
         self.omega_body = np.zeros(3)
         self.imu_received = False
 
+        # ---- Latest foot vertical force (ground reaction) ----
+        self.fz_left = 0.0
+        self.fz_right = 0.0
+
         # ---- Subscribers ----
         self.js_sub = self.create_subscription(
             JointState, js_topic, self.joint_state_cb, 10)
         self.imu_sub = self.create_subscription(
             Imu, imu_topic, self.imu_cb, 10)
+        self.left_ft_sub = self.create_subscription(
+            WrenchStamped, left_wrench_topic, self.left_ft_cb, 10)
+        self.right_ft_sub = self.create_subscription(
+            WrenchStamped, right_wrench_topic, self.right_ft_cb, 10)
 
         # ---- Publisher ----
         self.odom_pub = self.create_publisher(Odometry, out_topic, 10)
@@ -56,7 +70,15 @@ class LegOdomNode(Node):
         self.get_logger().info(f"  URDF: {urdf_path}")
         self.get_logger().info(f"  IMU: {imu_topic}")
         self.get_logger().info(f"  Joint states: {js_topic}")
+        self.get_logger().info(f"  Foot FT: {left_wrench_topic} | {right_wrench_topic}")
+        self.get_logger().info(f"  Contact threshold: {threshold} N (foot Fz)")
         self.get_logger().info(f"  Output: {out_topic}")
+
+    def left_ft_cb(self, msg: WrenchStamped):
+        self.fz_left = msg.wrench.force.z
+
+    def right_ft_cb(self, msg: WrenchStamped):
+        self.fz_right = msg.wrench.force.z
 
     def imu_cb(self, msg: Imu):
         """Cache latest IMU orientation and angular velocity."""
@@ -84,11 +106,14 @@ class LegOdomNode(Node):
 
         position = np.array(msg.position)
         velocity = np.array(msg.velocity)
-        effort = np.array(msg.effort)
+
+        # Contact from foot ground-reaction force (not joint effort).
+        left_contact, right_contact = self.leg_odom.detect_contact(
+            self.fz_left, self.fz_right)
 
         # Compute velocity
         v_world, confidence = self.leg_odom.compute_velocity(
-            position, velocity, effort,
+            position, velocity, left_contact, right_contact,
             self.R_body_to_world, self.omega_body
         )
 

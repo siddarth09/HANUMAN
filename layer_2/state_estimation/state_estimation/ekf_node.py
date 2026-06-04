@@ -1,23 +1,3 @@
-# ekf_node.py
-# ROS2 node wrapping the Error-State EKF (ekf_core.ErrorStateEKF).
-#
-# Wiring (driven by config/ekf_config.yaml):
-#   imu0  (sensor_msgs/Imu)      -> predict() with (accel, gyro); the IMU's
-#                                   absolute orientation is fused as an update
-#                                   if imu0_config marks roll/pitch/yaw true.
-#   odom0 (nav_msgs/Odometry)    -> update() with whatever odom0_config marks
-#                                   true (here: linear velocity from leg odom).
-#   ground_truth (nav_msgs/Odometry) -> validation only, NEVER fused.
-#
-# A timer running at `frequency` Hz publishes the fused nav_msgs/Odometry and
-# (optionally) the world_frame -> base_link_frame TF.
-#
-# Gravity note: ekf_core.predict() compensates gravity internally
-# (accel_world = R @ f_body + g_world), so it expects the RAW IMU specific
-# force (~[0,0,+9.81] when level and static). If imu0 publishes gravity-removed
-# linear acceleration, set imu0_remove_gravitational_acceleration: true and the
-# node reconstructs the specific force before calling predict().
-
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import numpy as np

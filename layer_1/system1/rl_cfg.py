@@ -39,7 +39,7 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
             desired_kl=0.01,
             max_grad_norm=1.0,
         ),
-        experiment_name="hanuman_g1_rough",
+        experiment_name="hanuman_g1_mars",
         save_interval=100,
         num_steps_per_env=24,
         max_iterations=150_000,

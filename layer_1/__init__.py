@@ -1,22 +1,11 @@
+"""HANUMAN layer_1.
+
+Two-system locomotion stack:
+  - system1/  RL high-level policy ("System 1") — registers the mjlab tasks.
+  - system0/  MPC executor ("System 0", copied from BHEEMA) — used in the ROS hybrid.
+
+The mjlab task registry symlink (~/mjlab/src/mjlab/tasks/hanuman -> layer_1) imports
+this package, so importing system1 here keeps `Hanuman-Mars-v0` registered.
 """
-HANUMAN — Humanoid Autonomous Navigation on Unstructured Martian And Natural Terrain
 
-Registers:
-  - Hanuman-Velocity-Rough-G1       (training)
-  - Hanuman-Velocity-Rough-G1-Play  (evaluation)
-"""
-
-from mjlab.tasks.registry import register_mjlab_task
-from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
-
-from .env_cfg import hanuman_g1_rough_env_cfg
-from .rl_cfg import hanuman_g1_ppo_runner_cfg
-
-# Training task
-register_mjlab_task(
-    task_id="Hanuman-Mars-v0",
-    env_cfg=hanuman_g1_rough_env_cfg(),
-    play_env_cfg=hanuman_g1_rough_env_cfg(play=True),
-    rl_cfg=hanuman_g1_ppo_runner_cfg(),
-    runner_cls=VelocityOnPolicyRunner,
-)
+from . import system1  # noqa: F401  (registers Hanuman-Mars-v0 on import)

@@ -47,7 +47,11 @@ ekf_node:
     odom0_differential: false
     odom0_relative: false
     odom0_pose_rejection_threshold: 5.0     # Mahalanobis distance
-    odom0_twist_rejection_threshold: 1000.0
+    # Now that contact is FT-gated and leg-odom velocity is trustworthy (~0.24
+    # m/s RMSE), the filter MUST fuse it — a tight gate (5.0) rejected 100% of
+    # updates, leaving the filter open-loop and diverging in z. 25 still blocks
+    # absurd spikes but lets normal corrections through.
+    odom0_twist_rejection_threshold: 25.0
 
     # ---- Future: Visual odometry ----
     # odom1: /vo/odom
@@ -77,3 +81,20 @@ ekf_node:
     # ---- Ground truth (validation only, never fused) ----
     ground_truth_topic: /ground_truth/odom
     ground_truth_enabled: true
+
+
+# ---------------------------------------------------------------------------
+# Leg odometry node (joint_states + IMU + foot FT -> /leg_odometry velocity)
+# ---------------------------------------------------------------------------
+leg_odom_node:
+  ros__parameters:
+    # Contact from foot ground-reaction force (Fz), NOT ankle joint effort.
+    # Per foot Fz is ~half body weight in double stance (~160 N here) and ~0 in
+    # swing; 30 N cleanly separates them and is well above sensor noise.
+    force_contact_threshold: 30.0          # N
+    base_noise: 0.05
+    imu_topic: /imu_broadcaster/imu
+    joint_states_topic: /joint_states
+    output_topic: /leg_odometry
+    left_wrench_topic: /left_foot_ft_broadcaster/wrench
+    right_wrench_topic: /right_foot_ft_broadcaster/wrench
