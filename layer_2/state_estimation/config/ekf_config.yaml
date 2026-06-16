@@ -1,0 +1,100 @@
+ekf_node:
+  ros__parameters:
+    # ---- Filter settings ----
+    frequency: 50.0               # Hz, output rate
+    sensor_timeout: 0.1           # seconds, predict-only after this
+    print_diagnostics: true
+
+    # ---- Frames (REP-105) ----
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom             # odom for continuous, map for global
+
+    # ---- TF ----
+    publish_tf: true
+    transform_time_offset: 0.0
+
+    # ---- Initial state ----
+    # [x,y,z, roll,pitch,yaw, vx,vy,vz, wx,wy,wz, ax,ay,az]
+    initial_state: [0.0, 0.0, 0.75,
+                    0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0]
+    
+     
+    # ---- IMU (drives prediction step) ----
+    imu0: /imu_broadcaster/imu
+    imu0_config: [false, false, false,
+                  true,  true,  true,
+                  false, false, false,
+                  true,  true,  true,
+                  true,  true,  true]
+    imu0_remove_gravitational_acceleration: false
+    imu0_queue_size: 10
+    imu0_differential: false
+    imu0_relative: false
+
+    # ---- Leg odometry (measurement) ----
+    odom0: /leg_odometry
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  true,
+                   false, false, false,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+    odom0_pose_rejection_threshold: 5.0     # Mahalanobis distance
+    # Now that contact is FT-gated and leg-odom velocity is trustworthy (~0.24
+    # m/s RMSE), the filter MUST fuse it — a tight gate (5.0) rejected 100% of
+    # updates, leaving the filter open-loop and diverging in z. 25 still blocks
+    # absurd spikes but lets normal corrections through.
+    odom0_twist_rejection_threshold: 25.0
+
+    # ---- Future: Visual odometry ----
+    # odom1: /vo/odom
+    # odom1_config: [true,true,true, false,false,false, true,true,true, false,false,false, false,false,false]
+    # odom1_differential: true
+    # odom1_relative: false
+
+    # ---- Gravity ----
+    gravitational_acceleration: 9.81    # 3.72 for Mars
+
+    # ---- Process noise (our extension — IMU noise densities) ----
+    # robot_localization uses a full 15x15 Q matrix
+    # we parameterize through physical IMU noise specs instead
+    accel_noise_density: 2.0            # m/s²/√Hz
+    gyro_noise_density: 0.01            # rad/s/√Hz
+    accel_bias_random_walk: 0.01        # m/s³/√Hz
+    gyro_bias_random_walk: 0.001        # rad/s²/√Hz
+
+    # ---- Initial estimate covariance (our error state) ----
+    # [δp(3), δv(3), δθ(3), δb_a(3), δb_g(3)]
+    initial_estimate_covariance: [0.1, 0.1, 0.1,   # position: 10x larger
+                              0.1, 0.1, 0.1,    # velocity: 10x larger
+                              0.01, 0.01, 0.01,  # orientation
+                              0.1, 0.1, 0.1,     # bias_accel
+                              0.01, 0.01, 0.01]   # bias_gyro
+
+    # ---- Ground truth (validation only, never fused) ----
+    ground_truth_topic: /ground_truth/odom
+    ground_truth_enabled: true
+
+
+# ---------------------------------------------------------------------------
+# Leg odometry node (joint_states + IMU + foot FT -> /leg_odometry velocity)
+# ---------------------------------------------------------------------------
+leg_odom_node:
+  ros__parameters:
+    # Contact from foot ground-reaction force (Fz), NOT ankle joint effort.
+    # Per foot Fz is ~half body weight in double stance (~160 N here) and ~0 in
+    # swing; 30 N cleanly separates them and is well above sensor noise.
+    force_contact_threshold: 30.0          # N
+    base_noise: 0.05
+    imu_topic: /imu_broadcaster/imu
+    joint_states_topic: /joint_states
+    output_topic: /leg_odometry
+    left_wrench_topic: /left_foot_ft_broadcaster/wrench
+    right_wrench_topic: /right_foot_ft_broadcaster/wrench
