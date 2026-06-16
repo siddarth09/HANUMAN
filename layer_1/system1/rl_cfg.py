@@ -7,6 +7,7 @@ from mjlab.rl import (
 )
 
 
+
 def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     """Create RL runner configuration for HANUMAN rough terrain."""
     return RslRlOnPolicyRunnerCfg(
@@ -40,7 +41,7 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
             max_grad_norm=1.0,
         ),
         experiment_name="hanuman_g1_mars",
-        save_interval=100,
+        save_interval=10000,
         num_steps_per_env=24,
         max_iterations=150_000,
     )

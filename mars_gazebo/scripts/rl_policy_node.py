@@ -141,7 +141,7 @@ class RLPolicyNode(Node):
     def __init__(self):
         super().__init__("rl_policy_node")
 
-        self.declare_parameter("model_path", "/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_425000.pt")
+        self.declare_parameter("model_path", "/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_220000.pt")
         self.declare_parameter("policy_rate", 50.0)   # policy trained at 50 Hz
         self.declare_parameter("device", "cuda")        # "cpu" or "cuda"
         self.declare_parameter("action_clip", 1.0)

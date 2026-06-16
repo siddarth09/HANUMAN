@@ -4,6 +4,8 @@
 
 A proposed four-layer autonomy stack for deploying bipedal humanoid robots on unstructured terrain — from Earth wilderness to the Martian surface.
 
+https://github.com/user-attachments/assets/156a253e-15a4-4766-9701-f271a3bcd135
+
 ---
 
 ## The Problem

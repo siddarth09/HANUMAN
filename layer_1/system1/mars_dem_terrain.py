@@ -25,7 +25,11 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from mjlab.terrains.heightfield_terrains import _compute_flat_patches, color_by_height
+from mjlab.terrains.heightfield_terrains import (
+    _compute_flat_patches,
+    _fractal_perlin_noise_2d,
+    color_by_height,
+)
 from mjlab.terrains.terrain_generator import (
     SubTerrainCfg,
     TerrainGeometry,
@@ -83,6 +87,26 @@ class HfDemTerrainCfg(SubTerrainCfg):
     """Subtract the window minimum so each patch starts near z=0 (keeps patches
     co-planar across the grid instead of inheriting the DEM's absolute datum)."""
 
+    # Procedural surface texture layered on the DEM macro-relief (a 1 m/px orbital
+    # DEM is otherwise a smooth ramp). Set rock_count_max=0 and
+    # regolith_amplitude_m=0 for the bare DEM.
+    regolith_amplitude_m: float = 0.05
+    """Max amplitude (m) of fractal regolith noise at difficulty=1."""
+    regolith_feature_m: float = 1.0
+    """Characteristic wavelength (m) of the base regolith octave."""
+    rock_count_max: int = 0
+    """Scattered rocks per patch at difficulty=1. Off by default — rocks are
+    nav-layer obstacles to route around, not terrain to step on."""
+    rock_height_range_m: tuple[float, float] = (0.04, 0.18)
+    """Min/max rock height (m), scaled by difficulty."""
+    rock_radius_range_m: tuple[float, float] = (0.08, 0.30)
+    """Min/max rock footprint radius (m)."""
+    roughness_floor: float = 0.1
+    """Minimum roughness fraction so even easy rows have some texture."""
+    max_slope_deg: float = 25.0
+    """Reject DEM windows whose 95th-pct local grade exceeds this — the orbital
+    DEM has near-vertical crater walls a velocity walker can't climb. ~89 disables."""
+
     def function(
         self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
     ) -> TerrainOutput:
@@ -100,18 +124,32 @@ class HfDemTerrainCfg(SubTerrainCfg):
                 f"{win_r}x{win_c} px window but DEM is only {dem_rows}x{dem_cols} px."
             )
 
-        # Sample candidate crops and rank by relief (max - min). Pick the one at
-        # the difficulty percentile so curriculum rows go flat -> steep.
+        # Sample candidate crops; for each compute relief (max-min) and a robust
+        # local steepness (95th-pct gradient magnitude = rise/run = tan(angle)).
         max_r = dem_rows - win_r
         max_c = dem_cols - win_c
         r0s = rng.integers(0, max_r + 1, size=self.window_candidates)
         c0s = rng.integers(0, max_c + 1, size=self.window_candidates)
         reliefs = np.empty(self.window_candidates)
+        steepness = np.empty(self.window_candidates)
         for i, (r0, c0) in enumerate(zip(r0s, c0s)):
             w = dem[r0 : r0 + win_r, c0 : c0 + win_c]
             reliefs[i] = w.max() - w.min()
-        order = np.argsort(reliefs)
-        pick = int(round(np.clip(difficulty, 0.0, 1.0) * (self.window_candidates - 1)))
+            gy, gx = np.gradient(w, self.dem_resolution_m)
+            steepness[i] = float(np.percentile(np.hypot(gx, gy), 95))
+
+        # Steepness cap: drop windows steeper than max_slope_deg (unclimbable
+        # crater walls) so the curriculum only ever serves climbable DEM. Fall
+        # back to the flattest candidate if every crop exceeds the cap.
+        max_grade = np.tan(np.radians(self.max_slope_deg))
+        climbable = np.where(steepness <= max_grade)[0]
+        if climbable.size == 0:
+            climbable = np.array([int(np.argmin(steepness))])
+
+        # Rank the climbable windows by relief and pick the difficulty percentile
+        # so curriculum rows still go flat -> steep within the climbable set.
+        order = climbable[np.argsort(reliefs[climbable])]
+        pick = int(round(np.clip(difficulty, 0.0, 1.0) * (len(order) - 1)))
         sel = order[pick]
         window = dem[r0s[sel] : r0s[sel] + win_r, c0s[sel] : c0s[sel] + win_c]
 
@@ -123,6 +161,28 @@ class HfDemTerrainCfg(SubTerrainCfg):
         length_pixels = int(self.size[1] / self.horizontal_scale)
         zoom = (width_pixels / window.shape[0], length_pixels / window.shape[1])
         window_hi = ndimage.zoom(window, zoom, order=1)
+
+        # --- Overlay procedural Mars micro-roughness on the DEM macro-slope ---
+        # The DEM gives the large-scale crater-wall/slope shape; here we add the
+        # cm-scale regolith texture and scattered rocks that an orbital DEM can't
+        # capture, so the surface looks/behaves like real Mars terrain rather
+        # than a smooth ramp. Magnitude scales with curriculum difficulty.
+        gx, gy = window_hi.shape
+        rough = max(self.roughness_floor, float(np.clip(difficulty, 0.0, 1.0)))
+        if self.regolith_amplitude_m > 0.0:
+            scale = max(2.0, self.size[0] / self.regolith_feature_m)
+            regolith = _fractal_perlin_noise_2d(gx, gy, rng, octaves=4, scale=scale)
+            window_hi = window_hi + rough * self.regolith_amplitude_m * regolith
+        n_rocks = int(round(rough * self.rock_count_max))
+        if n_rocks > 0:
+            ii, jj = np.mgrid[0:gx, 0:gy]
+            for _ in range(n_rocks):
+                ci = int(rng.integers(0, gx))
+                cj = int(rng.integers(0, gy))
+                r_px = max(1.0, rng.uniform(*self.rock_radius_range_m) / self.horizontal_scale)
+                h_m = rough * rng.uniform(*self.rock_height_range_m)
+                d2 = ((ii - ci) ** 2 + (jj - cj) ** 2) / (r_px * r_px)
+                window_hi = window_hi + h_m * np.maximum(0.0, 1.0 - d2)
 
         noise = np.rint(window_hi / self.vertical_scale).astype(np.int16)
 
