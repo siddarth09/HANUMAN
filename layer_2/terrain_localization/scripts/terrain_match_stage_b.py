@@ -68,8 +68,9 @@ def read_bag(bag):
     return np.array(gt), depth, edges
 
 
-SCENE = ("/home/sid/projects25/src/HANUMAN/mars_gazebo/"
-         "unitree_g1_mjcf/mars_nav_scene.xml")
+SCENE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+    "mars_gazebo", "unitree_g1_mjcf", "mars_nav_scene.xml")
 
 
 def model_pelvis_cam():

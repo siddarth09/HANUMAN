@@ -14,8 +14,8 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
-from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid, Path, Odometry
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 
 from navigation.costmap import build_costmap, to_occupancy
@@ -69,8 +69,7 @@ class GlobalPlanner(Node):
         self.costmap_pub = self.create_publisher(OccupancyGrid, "/nav/global_costmap", latched)
         self.path_pub = self.create_publisher(Path, "/nav/global_path", 1)
         self.create_subscription(PoseStamped, "/goal_pose", self._goal_cb, 1)
-        self.create_subscription(PoseWithCovarianceStamped, "/terrain_match/pose",
-                                 self._pose_cb, 10)
+        self.create_subscription(Odometry, "/odometry/filtered", self._pose_cb, 10)
 
         self._publish_costmap()
         self.get_logger().info("global planner ready — set a goal in RViz (2D Goal Pose).")
@@ -81,7 +80,7 @@ class GlobalPlanner(Node):
         j = int(round((y - self.gy[0]) / self.res))
         return i, j
 
-    def _pose_cb(self, msg: PoseWithCovarianceStamped):
+    def _pose_cb(self, msg: Odometry):
         self.start_xy = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y])
 
     def _publish_costmap(self):

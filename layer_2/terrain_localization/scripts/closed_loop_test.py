@@ -9,17 +9,27 @@ prior bounds drift — which is the whole point.
 
   MUJOCO_GL=egl python3 closed_loop_test.py <bag>
 """
+import os
 import sys
+from glob import glob
+
 import numpy as np
 
-sys.path.insert(0, "/home/sid/projects25/install/terrain_localization/lib/python3.12/site-packages")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_HANUMAN = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))   # .../src/HANUMAN
+_WS = os.path.abspath(os.path.join(_HANUMAN, "..", ".."))           # colcon workspace root
+_sp = glob(os.path.join(
+    _WS, "install", "terrain_localization", "lib", "python*", "site-packages"))
+if _sp:
+    sys.path.insert(0, _sp[0])
 from terrain_localization.dem import DEM
 from terrain_localization.local_map import LocalElevationMap
 from terrain_localization import matcher
 from terrain_localization.calib import model_pelvis_cam, quat_R, yaw_of
 
-SCENE = "/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/mars_nav_scene.xml"
-TERRAIN = "/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/mars_nav_200/model.xml"
+_MJCF = os.path.join(_HANUMAN, "mars_gazebo", "unitree_g1_mjcf")
+SCENE = os.path.join(_MJCF, "mars_nav_scene.xml")
+TERRAIN = os.path.join(_MJCF, "mars_nav_200", "model.xml")
 
 
 def compose(T, p):

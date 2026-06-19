@@ -1,6 +1,6 @@
 """HANUMAN orbital-prior DEMO: full chain on a rosbag, visualized in RViz.
 
-  ros2 launch terrain_localization terrain_demo.launch.py bag:=/home/sid/projects25/rosbag2_2026_06_16-17_04_02
+  ros2 launch terrain_localization terrain_demo.launch.py bag:=/path/to/rosbag2_dir
 
 Brings up: static map->odom (v1: identity) + leg_odom + EKF + GTSAM slam_node +
 terrain_matcher_node + RViz, and plays the bag. Watch GTSAM (red) get pulled onto
@@ -22,7 +22,7 @@ def generate_launch_description():
     rviz = LaunchConfiguration("rviz")
 
     return LaunchDescription([
-        DeclareLaunchArgument("bag", default_value="/home/sid/projects25/rosbag2_2026_06_16-17_04_02"),
+        DeclareLaunchArgument("bag", description="Path to the rosbag2 directory to play"),
         DeclareLaunchArgument("rviz", default_value="true"),
 
         IncludeLaunchDescription(

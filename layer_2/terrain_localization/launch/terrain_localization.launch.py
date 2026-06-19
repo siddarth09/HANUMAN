@@ -34,6 +34,8 @@ def generate_launch_description():
                               description="publish identity map->odom (v1: map==odom at spawn)"),
         DeclareLaunchArgument("rviz", default_value="false",
                               description="also open RViz with the terrain config"),
+        DeclareLaunchArgument("lidar", default_value="true",
+                              description="run the 3D MID360 lidar node (terrain source)"),
 
         Node(
             package="terrain_localization",
@@ -41,6 +43,13 @@ def generate_launch_description():
             name="terrain_matcher_node",
             output="screen",
             parameters=[config_file, {"use_sim_time": use_sim_time}],
+        ),
+        Node(
+            package="mars_gazebo",
+            executable="lidar3d_node.py",
+            name="lidar3d_node",
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("lidar")),
         ),
         Node(
             package="tf2_ros",

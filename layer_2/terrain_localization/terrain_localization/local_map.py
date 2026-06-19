@@ -47,6 +47,22 @@ class LocalElevationMap:
         np.add.at(self.cnt, (iy[ok], ix[ok]), 1.0)
         return int(ok.sum())
 
+    def add_cloud(self, points, T_odom_lidar):
+        """Accumulate a 3D point cloud (Nx3, lidar frame) into the odom grid."""
+        if points.size == 0:
+            return 0
+        if self.decay < 1.0:
+            self.sum *= self.decay
+            self.cnt *= self.decay
+        pts = np.vstack([points.T, np.ones(points.shape[0])])   # 4xN
+        w = (T_odom_lidar @ pts)[:3]
+        ix = np.round((w[0]-self.x0)/self.res).astype(int)
+        iy = np.round((w[1]-self.y0)/self.res).astype(int)
+        ok = (ix >= 0) & (ix < self.nx) & (iy >= 0) & (iy < self.ny)
+        np.add.at(self.sum, (iy[ok], ix[ok]), w[2][ok])
+        np.add.at(self.cnt, (iy[ok], ix[ok]), 1.0)
+        return int(ok.sum())
+
     def mean_grid(self):
         g = np.full_like(self.sum, np.nan)
         nz = self.cnt >= self.min_cnt

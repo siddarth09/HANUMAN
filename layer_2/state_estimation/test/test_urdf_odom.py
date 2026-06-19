@@ -1,10 +1,14 @@
 # test_leg_odom.py
 # Run on your machine: python3 test_leg_odom.py
 
+import os
+
 import pinocchio as pin
 import numpy as np
 
-URDF_PATH = '/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1/g1_mujoco.urdf'  
+URDF_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+    "mars_gazebo", "unitree_g1", "g1_mujoco.urdf")
 
 # ---- Load model ----
 model = pin.buildModelFromUrdf(URDF_PATH, pin.JointModelFreeFlyer())

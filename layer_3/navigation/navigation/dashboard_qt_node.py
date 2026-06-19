@@ -6,19 +6,22 @@ import sys
 
 import numpy as np
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
+from sensor_msgs.msg import Image
 
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QImage,
                          QPolygonF, QRadialGradient, QLinearGradient)
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF
 
-ALBEDO = ("/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/"
-          "mars_nav_200/mars_nav_200_albedo.png")
+ALBEDO = os.path.join(
+    get_package_share_directory("mars_gazebo"),
+    "unitree_g1_mjcf", "mars_nav_200", "mars_nav_200_albedo.png")
 DEM_CACHE = "/tmp/hanuman_dem.npz"
 ALB_EXTENT = (-100.0, -28.0, 100.0, 172.0)   # albedo coverage in map frame (x0,y0,x1,y1)
 
@@ -61,12 +64,25 @@ class DashboardNode(Node):
         self.goal_pub = self.create_publisher(PoseStamped, "/goal_pose", 1)
         self.pose_pub = self.create_publisher(PoseWithCovarianceStamped, "/initialpose", 1)
 
+        # Robot first-person view (D435 color). Kept off the generic msg/stamp dicts
+        # so the 30 Hz feed never masks a lost nav link in link_ok().
+        self.cam_msg = None
+        self.cam_stamp = 0.0
+        self.cam_topic = self.declare_parameter(
+            "camera_topic", "/d435/color/image_raw").value
+        cam_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        self.create_subscription(Image, self.cam_topic, self._on_cam, cam_qos)
+
     def _sub(self, typ, topic, qos):
         self.create_subscription(typ, topic, lambda m, t=topic: self._on(t, m), qos)
 
     def _on(self, topic, m):
         self.msg[topic] = m
         self.stamp[topic] = self.now()
+
+    def _on_cam(self, m):
+        self.cam_msg = m
+        self.cam_stamp = self.now()
 
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -244,6 +260,7 @@ class MapView(QWidget):
         self._paint_topbar(p, W)
         self._paint_localization(p)
         self._paint_navigation(p, W)
+        self._paint_camera(p, W, H)
         self._paint_legend(p, H)
         self._paint_tools(p, W, H)
         p.end()
@@ -321,11 +338,9 @@ class MapView(QWidget):
             p.drawEllipse(QPointF(x, y), 6.5, 6.5)
             self._heading_line(p, x, y, ekf[2], "ekf")
         g = self.node.pose_xy("/terrain_match/pose", cov=True)
-        best = None
         if g:
             (gx, gy, gyaw), cov = g
             x, y = self.toPx(gx, gy)
-            best = (x, y)
             if cov > 0:
                 pen = QPen(qc("gtsam", 110), 1)
                 pen.setDashPattern([3, 3])
@@ -337,8 +352,12 @@ class MapView(QWidget):
             p.setBrush(qc("gtsam"))
             p.drawPolygon(self._star(x, y, 13))
             self._heading_line(p, x, y, gyaw, "gtsam", 28)
-        elif ekf:
+        # footprint follows the EKF (trusted nav pose), falls back to GTSAM
+        best = None
+        if ekf:
             best = self.toPx(ekf[0], ekf[1])
+        elif g:
+            best = self.toPx(g[0][0], g[0][1])
         if best:
             pen = QPen(qc("dim", 160), 1)
             pen.setDashPattern([2, 4])
@@ -411,7 +430,7 @@ class MapView(QWidget):
         x, y = W - 334, 96
         self._txt(p, x, y, "NAVIGATION", "accent", 14, QFont.Normal, track=4)
         self._rule(p, x, y + 12, 310)
-        g = self.node.pose_xy("/terrain_match/pose")
+        g = self.node.pose_xy("/odometry/filtered")
         dist = math.hypot(self.goal[0] - g[0], self.goal[1] - g[1]) if (self.goal and g) else None
         herr = None
         if self.goal and g:
@@ -443,6 +462,63 @@ class MapView(QWidget):
             mode = "TRANSIT"
         self._txt(p, x, y + 206, "MODE", "dim", 12, QFont.Normal, track=2)
         self._txt(p, x + 310, y + 208, mode, "accent", 18, QFont.Normal, track=2, right=True)
+
+    # ---- robot first-person view (D435) ----
+    def _cam_qimage(self):
+        m = self.node.cam_msg
+        if m is None:
+            return None
+        h, w, enc = m.height, m.width, m.encoding
+        try:
+            buf = np.frombuffer(bytes(m.data), dtype=np.uint8)
+            if enc in ("rgb8", "bgr8"):
+                arr = buf.reshape(h, m.step)[:, :w * 3].reshape(h, w, 3)
+                if enc == "bgr8":
+                    arr = arr[..., ::-1]
+                arr = np.ascontiguousarray(arr)
+                return QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+            if enc in ("rgba8", "bgra8"):
+                arr = buf.reshape(h, m.step)[:, :w * 4].reshape(h, w, 4)
+                if enc == "bgra8":
+                    arr = arr[..., [2, 1, 0, 3]]
+                arr = np.ascontiguousarray(arr)
+                return QImage(arr.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
+        except Exception:
+            return None
+        return None
+
+    def _paint_camera(self, p, W, H):
+        cw = 320
+        ch = int(cw * 3 / 4)                 # D435 is 640x480 (4:3)
+        cx, cy = W - 24 - cw, H - 108 - ch
+        rect = QRectF(cx, cy, cw, ch)
+        self._txt(p, cx, cy - 10, "ROBOT VIEW · D435", "accent", 13, QFont.Normal, track=3)
+        p.fillRect(rect, qc("bg", 230))
+        img = self._cam_qimage()
+        if img is not None and not img.isNull():
+            p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            p.drawImage(rect, img)
+        else:
+            self._txt(p, cx + cw / 2 - 40, cy + ch / 2, "NO VIDEO", "dim", 14,
+                      QFont.Normal, track=2)
+        # corner brackets (viewport framing)
+        p.setPen(QPen(qc("accent_lt", 180), 1.5))
+        b = 16
+        for (ex, ey, dx, dy) in ((cx, cy, 1, 1), (cx + cw, cy, -1, 1),
+                                 (cx, cy + ch, 1, -1), (cx + cw, cy + ch, -1, -1)):
+            p.drawLine(int(ex), int(ey), int(ex + dx * b), int(ey))
+            p.drawLine(int(ex), int(ey), int(ex), int(ey + dy * b))
+        p.setPen(QPen(qc("line"), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(rect)
+        # live / no-signal indicator
+        fresh = (self.node.now() - self.node.cam_stamp) < 1.0 if self.node.cam_stamp else False
+        dot = "ok" if fresh else "crit"
+        p.setPen(Qt.NoPen)
+        p.setBrush(qc(dot))
+        p.drawEllipse(QPointF(cx + 14, cy + 15), 4, 4)
+        self._txt(p, cx + 26, cy + 19, "LIVE" if fresh else "NO SIGNAL", dot, 11,
+                  QFont.Normal, track=2)
 
     def _paint_legend(self, p, H):
         rows = [("GTSAM", "gtsam"), ("EKF", "ekf"), ("TRUTH", "truth"),
