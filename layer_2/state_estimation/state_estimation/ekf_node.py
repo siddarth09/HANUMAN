@@ -1,4 +1,4 @@
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
@@ -61,6 +61,16 @@ class EKFNode(Node):
                 twist_rejection_threshold=p['odom0_twist_rejection_threshold'],
             )
 
+        # terrain0: absolute z-position update from the DEM terrain matcher.
+        terrain_z_cfg = [False] * 15
+        terrain_z_cfg[2] = True   # meas index 2 == position z
+        self.ekf.register_sensor(
+            name='terrain0',
+            config=terrain_z_cfg,
+            noise=np.array([p['terrain0_z_noise'] ** 2]),
+            pose_rejection_threshold=p['terrain0_rejection_threshold'],
+        )
+
         # ---- Runtime state ----
         self._last_imu_time = None
         self._last_imu_stamp = None
@@ -74,6 +84,12 @@ class EKFNode(Node):
         if self.odom0_active:
             self.create_subscription(
                 Odometry, p['odom0'], self.odom0_cb, p['odom0_queue_size'])
+        self.create_subscription(
+            PoseWithCovarianceStamped, p['terrain0'], self.terrain0_cb,
+            p['terrain0_queue_size'])
+        # manual localization reset: snap EKF x,y to the clicked pose
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/initialpose', self.initialpose_cb, 10)
         if p['ground_truth_enabled']:
             self.create_subscription(
                 Odometry, p['ground_truth_topic'], self.ground_truth_cb, 10)
@@ -125,6 +141,11 @@ class EKFNode(Node):
             'odom0_noise': 0.05,
             'odom0_pose_rejection_threshold': float('inf'),
             'odom0_twist_rejection_threshold': float('inf'),
+            # terrain0: absolute z from the DEM terrain matcher (the only z observation)
+            'terrain0': '/terrain_match/pose',
+            'terrain0_queue_size': 10,
+            'terrain0_z_noise': 0.15,                 # std (m); overridden per-msg by its cov
+            'terrain0_rejection_threshold': 25.0,     # reject gross z outliers
             'gravitational_acceleration': 9.81,
             'accel_noise_density': 0.5,
             'gyro_noise_density': 0.01,
@@ -245,6 +266,23 @@ class EKFNode(Node):
 
         t = self._stamp_to_sec(msg.header.stamp)
         self.ekf.update('odom0', measurement, timestamp=t)
+
+    def terrain0_cb(self, msg: PoseWithCovarianceStamped):
+        # Absolute z (DEM ground height + nominal stand height) from the terrain matcher.
+        # Weight it by the matcher's published z variance (loose during a relocalization).
+        C = np.array(msg.pose.covariance).reshape(6, 6)
+        self.ekf.sensors['terrain0']['R'] = np.array([[max(C[2, 2], 1e-6)]])
+        measurement = np.zeros(15)
+        measurement[2] = msg.pose.pose.position.z
+        self.ekf.update('terrain0', measurement,
+                        timestamp=self._stamp_to_sec(msg.header.stamp))
+
+    def initialpose_cb(self, msg: PoseWithCovarianceStamped):
+        self.ekf.position[0] = msg.pose.pose.position.x
+        self.ekf.position[1] = msg.pose.pose.position.y
+        self.get_logger().warn(
+            f"EKF position RESET via /initialpose -> "
+            f"({self.ekf.position[0]:.1f}, {self.ekf.position[1]:.1f})")
 
     def ground_truth_cb(self, msg: Odometry):
         # Validation only — never fused into the filter.

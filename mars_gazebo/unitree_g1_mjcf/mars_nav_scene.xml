@@ -5,7 +5,7 @@
 <mujoco model="hanuman_mars_nav">
   <include file="g1_mars.xml"/>
 
-  <option gravity="0 0 -9.81" timestep="0.002">
+  <option gravity="0 0 -3.72" timestep="0.002">
     <flag warmstart="enable"/>
   </option>
   <statistic center="0 0 0.8" extent="6"/>

@@ -1,0 +1,83 @@
+[workspace]
+name = "hanuman"
+version = "0.1.0"
+description = "HANUMAN — Unitree G1 humanoid locomotion & autonomy on Mars terrain"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# ---------------------------------------------------------------------------
+# RL training / simulation stack (default environment).
+# torch must come from the cu130 wheel index for Blackwell (sm_120) support.
+# mjlab is git-only; pin to the commit the project was developed against.
+# ---------------------------------------------------------------------------
+[dependencies]
+python = "3.12.*"
+ffmpeg = "*"   # training video recording
+git = "*"
+
+[pypi-options]
+# torch 2.11.0+cu130 lives only on the PyTorch wheel index; everything else on
+# PyPI. unsafe-best-match lets uv consider both indexes for all packages.
+extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
+index-strategy = "unsafe-best-match"
+
+# Loose constraints here; pixi.lock pins the exact resolved versions.
+[pypi-dependencies]
+torch = "==2.11.0"            # cu130 build, from the extra index above
+mujoco = ">=3.8,<3.9"
+mujoco-warp = ">=3.8,<3.9"
+warp-lang = ">=1.13"
+rsl-rl-lib = ">=5.2"
+wandb = "*"
+tyro = "*"
+mjlab = { git = "https://github.com/mujocolab/mjlab.git", rev = "5a433e83" }
+
+# mjlab is installed from git (no dev symlink), so link the HANUMAN tasks into
+# it on activation — otherwise Hanuman-* tasks won't register.
+[activation]
+scripts = ["scripts/link_hanuman_tasks.sh"]
+
+[tasks]
+train = "python -m mjlab.scripts.train Hanuman-MarsRealistic-v0 --agent.max_iterations 300000 --video --video_interval 120000 --video_length 200"
+play = "python -m mjlab.scripts.play Hanuman-MarsRealistic-v0 --num_envs 1"
+
+# ---------------------------------------------------------------------------
+# ROS 2 Jazzy + mujoco_ros2_control (RoboStack). Separate environment so its
+# conda toolchain doesn't collide with the cu130 torch stack above.
+# `pixi run -e ros build-ros` colcon-builds the mujoco_ros2_control workspace.
+# ---------------------------------------------------------------------------
+[feature.ros]
+channels = ["https://prefix.dev/robostack-jazzy", "conda-forge"]
+platforms = ["linux-64"]
+
+[feature.ros.dependencies]
+python = "3.12.*"
+ros-jazzy-ros-base = "*"
+ros-jazzy-ros2-control = "*"
+ros-jazzy-ros2-controllers = "*"   # joint_state / imu / force_torque broadcasters, position controllers
+ros-jazzy-robot-state-publisher = "*"
+# mujoco_ros2_control is built from source (your NASA-JSC fork) via build-ros —
+# robostack's binary is mujoco-3.5 / no camera support, incompatible with our 3.8.
+# Gazebo backend (ros-gz-*) also omitted: it pins an older ros2-distro-mutex that
+# conflicts here. Gazebo deps stay in package.xml; run that path outside pixi.
+colcon-common-extensions = "*"
+compilers = "*"
+cmake = "*"
+ninja = "*"
+mujoco = "==3.8.0"
+
+# CPU torch for the .pt policy node (rl_policy_node.py); CUDA torch stays in the
+# `default` env for training.
+[feature.ros.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cpu"]
+index-strategy = "unsafe-best-match"
+
+[feature.ros.pypi-dependencies]
+torch = "==2.11.0"
+
+[feature.ros.tasks]
+build-ros = "colcon build --symlink-install"
+
+[environments]
+default = { features = [], solve-group = "default" }
+ros = { features = ["ros"], no-default-feature = true }

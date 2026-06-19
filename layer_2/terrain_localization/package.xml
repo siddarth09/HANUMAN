@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>terrain_localization</name>
+  <version>0.0.0</version>
+  <description>HANUMAN HiRISE orbital prior: terrain-relative localization. Builds a
+    local elevation map from depth and matches it against the global HiRISE DEM to
+    produce an absolute (drift-free) pose fix, consumed by the GTSAM factor graph in
+    state_estimation as a unary prior ("Mars-GPS").</description>
+  <maintainer email="siddarth.dayasagar@gmail.com">sid</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,10 +1,6 @@
-<!-- HANUMAN: G1 29-DOF robot model for mujoco_ros2_control
-     Robot-only file — no ground plane, no scene elements.
-     Include this from a scene file via <include file="g1_with_hands.xml"/>
-
-     All joints use <position> actuators to match ros2_control
-     position command interfaces. Legs changed from <motor> (menagerie
-     default) to <position> for direct position target control.
+<!-- HANUMAN: G1 29-DOF robot model for mujoco_ros2_control.
+     Robot-only (no ground plane/scene); include from a scene file.
+     All joints use <position> actuators for ros2_control position interfaces.
 -->
 <mujoco model="g1_29dof_with_hand_rev_1_0">
   <compiler angle="radian" meshdir="assets"/>
@@ -14,15 +10,15 @@
   <default>
     <default class="g1">
       <site rgba="1 0 0 1" size="0.01" group="5"/>
-      <joint armature="0.1" frictionloss="0.3" damping="0.5"/>
-      <position kp="500" dampratio="1" inheritrange="1"/>
+      <joint armature="0.025" frictionloss="0.0" damping="0.0"/>
+      <position kp="200" dampratio="1" inheritrange="1"/>
       <default class="visual">
         <geom group="2" type="mesh" contype="0" conaffinity="0" density="0" material="metal"/>
       </default>
       <default class="collision">
         <geom group="3" type="mesh"/>
-        <default class="foot">
-          <geom type="sphere" size="0.005" priority="1" friction="1.0" condim="6"/>
+        <default class="foot_capsule">
+          <geom type="capsule" size="0.01" priority="1" friction="1.0" condim="6"/>
         </default>
       </default>
     </default>
@@ -91,10 +87,8 @@
       <geom class="visual" mesh="pelvis_contour_link"/>
       <geom class="collision" mesh="pelvis_contour_link"/>
       <site name="imu_in_pelvis" size="0.01" pos="0.0 0.0 0.0"/>
-      <!-- Downward ground-height rangefinder: +Z points straight down
-           (quat 0 1 0 0 = 180 deg about X). Offset forward of the pelvis so the
-           ray clears the legs/feet and reads the terrain just ahead of the robot
-           (height-above-ground / step look-ahead). Exposed as 'ground_height'. -->
+      <!-- Downward ground-height rangefinder (quat 0 1 0 0 = 180 deg about X).
+           Offset forward of the pelvis so the ray clears the legs/feet. -->
       <site name="ground_height_ray" size="0.005" pos="0.35 0 0" quat="0 1 0 0" rgba="1 1 0 0.6" group="5"/>
 
       <!-- LEFT LEG -->
@@ -133,10 +127,13 @@
                     diaginertia="0.00167218 0.0016161 0.000217621"/>
                   <joint name="left_ankle_roll_joint" axis="1 0 0" range="-0.2618 0.2618" actuatorfrcrange="-50 50"/>
                   <geom class="visual" material="black" mesh="left_ankle_roll_link"/>
-                  <geom class="foot" pos="-0.05 0.025 -0.03"/>
-                  <geom class="foot" pos="-0.05 -0.025 -0.03"/>
-                  <geom class="foot" pos="0.12 0.03 -0.03"/>
-                  <geom class="foot" pos="0.12 -0.03 -0.03"/>
+                  <geom name="left_foot1_collision" class="foot_capsule" fromto="0.1 -0.026 -0.025 0.05 -0.027 -0.025"/>
+                  <geom name="left_foot2_collision" class="foot_capsule" fromto="-0.044 -0.018 -0.025 0.123 -0.018 -0.025"/>
+                  <geom name="left_foot3_collision" class="foot_capsule" fromto="-0.052 -0.01 -0.025 0.13 -0.01 -0.025"/>
+                  <geom name="left_foot4_collision" class="foot_capsule" fromto="-0.054 0 -0.025 0.132 0 -0.025"/>
+                  <geom name="left_foot5_collision" class="foot_capsule" fromto="-0.052 0.01 -0.025 0.13 0.01 -0.025"/>
+                  <geom name="left_foot6_collision" class="foot_capsule" fromto="-0.044 0.018 -0.025 0.123 0.018 -0.025"/>
+                  <geom name="left_foot7_collision" class="foot_capsule" fromto="0.1 0.026 -0.025 0.05 0.026 -0.025"/>
                   <site name="left_foot"/>
                   <!-- sole zone for the touch contact sensor (covers the foot geoms) -->
                   <site name="left_sole" type="box" pos="0.035 0 -0.03" size="0.10 0.045 0.02" rgba="1 0.5 0 0.2" group="5"/>
@@ -183,10 +180,13 @@
                     diaginertia="0.00167218 0.0016161 0.000217621"/>
                   <joint name="right_ankle_roll_joint" axis="1 0 0" range="-0.2618 0.2618" actuatorfrcrange="-50 50"/>
                   <geom class="visual" material="black" mesh="right_ankle_roll_link"/>
-                  <geom class="foot" pos="-0.05 0.025 -0.03"/>
-                  <geom class="foot" pos="-0.05 -0.025 -0.03"/>
-                  <geom class="foot" pos="0.12 0.03 -0.03"/>
-                  <geom class="foot" pos="0.12 -0.03 -0.03"/>
+                  <geom name="right_foot1_collision" class="foot_capsule" fromto="0.1 -0.026 -0.025 0.05 -0.026 -0.025"/>
+                  <geom name="right_foot2_collision" class="foot_capsule" fromto="-0.044 -0.018 -0.025 0.123 -0.018 -0.025"/>
+                  <geom name="right_foot3_collision" class="foot_capsule" fromto="-0.052 -0.01 -0.025 0.13 -0.01 -0.025"/>
+                  <geom name="right_foot4_collision" class="foot_capsule" fromto="-0.054 0 -0.025 0.132 0 -0.025"/>
+                  <geom name="right_foot5_collision" class="foot_capsule" fromto="-0.052 0.01 -0.025 0.13 0.01 -0.025"/>
+                  <geom name="right_foot6_collision" class="foot_capsule" fromto="-0.044 0.018 -0.025 0.123 0.018 -0.025"/>
+                  <geom name="right_foot7_collision" class="foot_capsule" fromto="0.1 0.026 -0.025 0.05 0.026 -0.025"/>
                   <site name="right_foot"/>
                   <!-- sole zone for the touch contact sensor (covers the foot geoms) -->
                   <site name="right_sole" type="box" pos="0.035 0 -0.03" size="0.10 0.045 0.02" rgba="1 0.5 0 0.2" group="5"/>
@@ -409,9 +409,8 @@
                 </body>
               </body>
             </body>
-            <!-- (Removed the in-sim 360-beam MID360 rangefinder ring: it cost
-                 ~99% of every sim step and is superseded by lidar3d_node.py,
-                 which ray-casts a 3D cloud from the `mid360_lidar` site.) -->
+            <!-- MID360 lidar: 3D cloud is ray-cast in lidar3d_node.py from the
+                 `mid360_lidar` site, not as an in-sim rangefinder ring. -->
           </body>
         </body>
       </body>
@@ -482,8 +481,7 @@
         <gyro name="imu_torso_gyro" site="imu_in_torso" noise="5e-4" cutoff="34.9"/>
         <accelerometer name="imu_torso_accel" site="imu_in_torso" noise="1e-2" cutoff="157"/>
 
-        <!-- Downward ground-height rangefinder (1 beam) -> 'ground_height-0'.
-             (The 360-beam mid360 ring was removed — see lidar3d_node.py for 3D.) -->
+        <!-- Downward ground-height rangefinder (1 beam) -> 'ground_height-0'. -->
         <rangefinder name="ground_height-0" site="ground_height_ray"/>
 
         <!-- Foot contact: 6-axis force/torque through each ankle (ground reaction).

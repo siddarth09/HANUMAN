@@ -11,6 +11,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -66,10 +67,29 @@ def generate_launch_description():
         output='screen',
     )
 
+   
+    run_slam = LaunchConfiguration('run_slam')
+    run_slam_arg = DeclareLaunchArgument(
+        'run_slam', default_value='true',
+        description='Bring up the GTSAM factor-graph SLAM node (Layer 2.2)')
+    slam_node = Node(
+        package='state_estimation',
+        executable='slam_node',
+        name='slam_node',
+        parameters=[
+            config_file,
+            {'use_sim_time': use_sim_time},
+        ],
+        condition=IfCondition(run_slam),
+        output='screen',
+    )
+
     return LaunchDescription([
         use_sim_time_arg,
         config_arg,
         urdf_arg,
+        run_slam_arg,
         leg_odom_node,
         ekf_node,
+        slam_node,
     ])

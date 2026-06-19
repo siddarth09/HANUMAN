@@ -44,4 +44,4 @@ def generate_launch_description():
     # Height scanner first; bring up the policy 3 s later, once /height_scan is live.
     delayed_policy = TimerAction(period=3.0, actions=[rl_policy])
 
-    return LaunchDescription([device_arg, model_arg, height_scanner, delayed_policy])
+    return LaunchDescription([device_arg, model_arg, delayed_policy])
