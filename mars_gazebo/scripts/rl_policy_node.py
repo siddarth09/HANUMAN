@@ -1,28 +1,4 @@
 #!/usr/bin/env python3
-"""
-HANUMAN RL Policy Node — Python (loads .pt directly, CUDA-capable).
-
-Loads either a raw rsl_rl checkpoint (model_*.pt with actor_state_dict) OR a
-TorchScript .pt, builds the 288-dim observation, and publishes 29 joint position
-targets at the policy's trained 50 Hz.
-
-Subscribes: /joint_states, /imu_broadcaster/imu, /ground_truth/odom,
-            /cmd_vel, /height_scan (LaserScan, 187 vals from height_scanner_node)
-Publishes:  /g1_position_controller/commands
-
-Run on CPU (works with system python3):
-    ros2 run mars_gazebo rl_policy_node.py --ros-args -p use_sim_time:=true
-
-Run on the sm_120 GPU (use a CUDA-capable torch venv; ROS must be sourced):
-    source /opt/ros/jazzy/setup.bash && source install/setup.bash
-    /home/sid/mujoco_env/bin/python \
-        install/mars_gazebo/lib/mars_gazebo/rl_policy_node.py \
-        --ros-args -p use_sim_time:=true -p device:=cuda
-
-NOTE: for this small MLP, CUDA is ~the same speed as CPU (~73 vs ~82 us/step) —
-inference is never the bottleneck. CPU is the safe default.
-"""
-
 import math
 import os
 import threading
@@ -41,7 +17,7 @@ from geometry_msgs.msg import Twist
 from std_msgs.msg import Float64MultiArray
 from ament_index_python.packages import get_package_share_directory
 
-# ─── Policy architecture (for loading a raw rsl_rl checkpoint) ────────────────
+
 
 
 class EmpiricalNormalization(nn.Module):
@@ -141,11 +117,15 @@ class RLPolicyNode(Node):
     def __init__(self):
         super().__init__("rl_policy_node")
 
-        self.declare_parameter("model_path", "/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_220000.pt")
+        self.declare_parameter("model_path", "/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_270000.pt")
         self.declare_parameter("policy_rate", 50.0)   # policy trained at 50 Hz
         self.declare_parameter("device", "cuda")        # "cpu" or "cuda"
         self.declare_parameter("action_clip", 1.0)
         self.declare_parameter("warmup_s", 5.0)
+        # Source for base linear velocity (obs[0:3]). EKF closes the state-estimation
+        # loop (no ground-truth cheat); set to /ground_truth/odom to A/B against truth.
+        # Both publish WORLD-frame twist, rotated world->body by quat_rotate_inverse.
+        self.declare_parameter("odom_topic", "/odometry/filtered")
 
         self.device = self._select_device(self.get_parameter("device").value)
         self._load_actor(self._resolve_model_path())
@@ -173,7 +153,8 @@ class RLPolicyNode(Node):
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(JointState, "/joint_states", self._js_cb, be)
         self.create_subscription(Imu, "/imu_broadcaster/imu", self._imu_cb, be)
-        self.create_subscription(Odometry, "/ground_truth/odom", self._odom_cb, be)
+        self.create_subscription(
+            Odometry, self.get_parameter("odom_topic").value, self._odom_cb, be)
         self.create_subscription(Twist, "/cmd_vel", self._cmd_cb, 10)
         self.create_subscription(LaserScan, "/height_scan", self._scan_cb, be)
         self._pub = self.create_publisher(

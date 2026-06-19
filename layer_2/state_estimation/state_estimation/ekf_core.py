@@ -30,6 +30,10 @@ class ErrorStateEKF:
         g = config.get("gravitational_acceleration",9.81)
         self.gravity = np.array([0.0,0.0,-g])
 
+        # reject-hold bounds: clamp the post-fall IMU-integration runaway
+        self.max_accel = float(config.get("max_accel", 40.0))      # m/s^2 (~4g)
+        self.max_speed = float(config.get("max_speed", 4.0))       # m/s
+
         # Nominal state 
 
         self.position = np.zeros(3)
@@ -184,10 +188,18 @@ class ErrorStateEKF:
         R = self._get_rotation_matrix()
         # Propogate nominal state 
 
-        accel_world = R @ accel_corrected + self.gravity 
-        self.position = self.position + self.velocity*dt +0.5*accel_world*dt**2 
+        accel_world = R @ accel_corrected + self.gravity
+        # Reject-hold: clip impact spikes so one bad sample can't corrupt velocity.
+        a_norm = np.linalg.norm(accel_world)
+        if a_norm > self.max_accel:
+            accel_world = accel_world * (self.max_accel / a_norm)
+        self.position = self.position + self.velocity*dt +0.5*accel_world*dt**2
 
-        self.velocity = self.velocity + accel_world * dt 
+        self.velocity = self.velocity + accel_world * dt
+        # clamp speed: bound the estimate when leg-odom updates are rejected
+        v_norm = np.linalg.norm(self.velocity)
+        if v_norm > self.max_speed:
+            self.velocity = self.velocity * (self.max_speed / v_norm)
 
         angle_delta = gyro_corrected *dt 
         self._apply_small_rotation(angle_delta)

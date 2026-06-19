@@ -1,0 +1,30 @@
+terrain_matcher_node:
+  ros__parameters:
+    # --- frames / topics ---
+    map_frame: map
+    depth_topic: /d435/depth/image_raw
+    camera_info_topic: /d435/camera_info
+    leg_odom_topic: /leg_odometry           # own DR: integrate world-frame velocity
+    imu_topic: /imu_broadcaster/imu         # own DR: absolute orientation (drift-free)
+
+    # --- DEM (sim: ray-cast the HiRISE hfield once, cached) ---
+    dem_offset: [92.0, 92.0, -3.947]         # terrain body pos in the scene
+    dem_bounds: [-8.0, 30.0, -14.0, 14.0]    # world x0,x1,y0,y1 covering the roam area
+    dem_res: 0.25
+    dem_cache: /tmp/hanuman_dem.npz
+
+    # --- local elevation accumulator ---
+    local_bounds: [-8.0, 30.0, -14.0, 14.0]
+    local_res: 0.2
+    depth_max: 40.0                          # reject sky (pixels at ~8251 m)
+    local_decay: 0.99                        # <1: sliding window (old frames fade) ~2-3 s
+
+    # --- matcher ---
+    match_period: 2.0                        # s  (slow global side-channel)
+    patch_half: 5.0                          # m  robot-centric patch half-extent
+    patch_res: 0.4
+    search_xy: 2.5                           # m  search window around EKF seed
+    search_xy_step: 0.25
+    search_yaw_deg: 15.0
+    search_yaw_step_deg: 5.0
+    min_fill: 0.10                           # min fraction of patch cells observed

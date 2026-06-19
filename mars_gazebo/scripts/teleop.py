@@ -54,10 +54,10 @@ class HanumanTeleop(Node):
     def __init__(self):
         super().__init__('hanuman_teleop')
 
-        self.declare_parameter('max_linear', 0.5)    # m/s — conservative for humanoid
-        self.declare_parameter('max_angular', 0.5)    # rad/s
+        self.declare_parameter('max_linear', 2.0)    # m/s — conservative for humanoid
+        self.declare_parameter('max_angular', 1.0)    # rad/s
         self.declare_parameter('speed_step', 0.1)
-        self.declare_parameter('rate', 20.0)
+        self.declare_parameter('rate', 30.0)
 
         self.pub = self.create_publisher(Twist, '/cmd_vel', 10)
 

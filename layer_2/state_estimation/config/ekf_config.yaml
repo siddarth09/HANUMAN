@@ -60,7 +60,7 @@ ekf_node:
     # odom1_relative: false
 
     # ---- Gravity ----
-    gravitational_acceleration: 9.81    # 3.72 for Mars
+    gravitational_acceleration: 9.81   # 3.72 for Mars
 
     # ---- Process noise (our extension — IMU noise densities) ----
     # robot_localization uses a full 15x15 Q matrix
