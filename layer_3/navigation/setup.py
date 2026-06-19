@@ -26,7 +26,8 @@ setup(
         'console_scripts': [
             'global_planner_node = navigation.global_planner_node:main',
             'mppi_node = navigation.mppi_node:main',
-            'dashboard_node = navigation.dashboard_node:main',
+            'dashboard_qt = navigation.dashboard_qt_node:main',
+            'dashboard_mock = navigation.mock_publisher:main',
         ],
     },
 )

@@ -37,11 +37,11 @@ def generate_launch_description():
 
     dashboard_arg = DeclareLaunchArgument(
         "dashboard", default_value="false",
-        description="open the Mars-ops dashboard (hillshade + cost + click-goal)")
+        description="open the Qt Mars-ops console")
     dashboard = Node(
         package="navigation",
-        executable="dashboard_node",
-        name="nav_dashboard",
+        executable="dashboard_qt",
+        name="hanuman_dashboard",
         output="screen",
         parameters=[{"use_sim_time": True}],
         condition=IfCondition(LaunchConfiguration("dashboard")),

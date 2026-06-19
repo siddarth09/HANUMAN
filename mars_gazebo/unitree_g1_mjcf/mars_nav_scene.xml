@@ -34,8 +34,9 @@
     <light name="fill" pos="0 0 80" dir="0 0 -1"
            diffuse="0.3 0.2 0.15" specular="0 0 0" castshadow="false"/>
 
-    <!-- Terrain + boulders, offset so the flat spawn spot is at the world origin. -->
-    <body name="mars_terrain" pos="92.000 92.000 -3.947">
+    <!-- Terrain + boulders, offset so a flat patch in the tile interior sits at the
+         world origin (robot spawn) — surrounded by terrain on all sides. -->
+    <body name="mars_terrain" pos="0.000 72.000 -3.577">
       <geom name="mars_nav_200_terrain" type="hfield" hfield="mars_nav_200_hfield"
       pos="0 0 0" material="mars_nav_200_mat"
       contype="1" conaffinity="1" condim="6"

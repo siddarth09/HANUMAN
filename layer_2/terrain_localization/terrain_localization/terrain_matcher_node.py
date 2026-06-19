@@ -26,8 +26,8 @@ class TerrainMatcherNode(Node):
         super().__init__("terrain_matcher_node")
         gp = self.declare_parameter
         gp("scene_path", _SCENE); gp("terrain_model", _TERRAIN)
-        gp("dem_offset", [92.0, 92.0, -3.947])
-        gp("dem_bounds", [-8.0, 30.0, -14.0, 14.0]); gp("dem_res", 0.25)
+        gp("dem_offset", [0.0, 72.0, -3.577])
+        gp("dem_bounds", [-28.0, 28.0, -24.0, 28.0]); gp("dem_res", 0.25)
         gp("dem_cache", "/tmp/hanuman_dem.npz")
         gp("map_frame", "map")
         gp("depth_topic", "/d435/depth/image_raw")

@@ -15,7 +15,7 @@
   <exec_depend>python3-scipy</exec_depend>
   <exec_depend>terrain_localization</exec_depend>   <!-- shared RViz config -->
   <exec_depend>rviz2</exec_depend>
-  <exec_depend>python3-matplotlib</exec_depend>     <!-- dashboard -->
+  <exec_depend>python3-pyqt5</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
