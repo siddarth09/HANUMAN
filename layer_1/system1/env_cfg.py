@@ -470,7 +470,10 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     
         "air_time": RewardTermCfg(
             func=mdp.feet_air_time,
-            weight=0.1, 
+            # 0.1 -> 0.25 barely moved the gait (peak height 0.04->0.056, still a
+            # shuffle). Pushing to 0.5: a real swing phase now earns up to ~1.0,
+            # comparable to the +2.0 tracking terms, so stepping genuinely competes.
+            weight=0.5,
             params={
                 "sensor_name": "feet_ground_contact",
                 "threshold_min": 0.05,
@@ -483,7 +486,11 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       
         "foot_clearance": RewardTermCfg(
             func=mdp.feet_clearance,
-            weight=-2.0,
+            # Lowered -2.0 -> -0.5. This cost is |foot_height-target| * foot_speed,
+            # so at -2.0 it was the dominant penalty and the cheapest way to cut it
+            # was to stop lifting/swinging the feet -> it trained the shuffle gait.
+            # Keep it as a light shaping term; feet_swing_height now owns clearance.
+            weight=-0.5,
             params={
                 "target_height": 0.1,
                 "height_sensor_name": "foot_height_scan",
@@ -494,7 +501,11 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         ),
         "foot_swing_height": RewardTermCfg(
             func=mdp.feet_swing_height,
-            weight=-0.5,
+            # -0.5 -> -1.0 was too weak (a 0.056m shuffle only cost ~0.2/landing vs
+            # +4 tracking). Pushing to -3.0 so the shuffle costs ~0.6/landing and the
+            # robot is forced to lift feet toward the 0.1m target. This penalizes
+            # (peak_swing_height/target - 1)^2 at landing.
+            weight=-3.0,
             params={
                 "sensor_name": "feet_ground_contact",
                 "height_sensor_name": "foot_height_scan",
@@ -588,13 +599,15 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             params={
                 "command_name": "twist",
                 # Ramp commands over the first ~30k iters (step = iter * 24).
+                # Capped at 0.8 m/s (was 1.2). Asking for 1.2 m/s on 31 deg Mars
+                # slopes was infeasible -> the robot shuffled and the terrain
+                # curriculum kept demoting it. Let it consolidate a real stepping
+                # gait at a feasible pace first; raise the cap later once it climbs.
                 "velocity_stages": [
-                    # Start slow: learn the gait + slope climbing at a walkable pace
-                    # before being asked for full speed up a 31 deg wall.
                     {"step": 0, "lin_vel_x": (-0.4, 0.4), "ang_vel_z": (-0.3, 0.3)},
-                    {"step": 8000 * 24, "lin_vel_x": (-0.7, 0.7), "ang_vel_z": (-0.5, 0.5)},
-                    {"step": 18000 * 24, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.7, 0.7)},
-                    {"step": 30000 * 24, "lin_vel_x": (-1.2, 1.2)},
+                    {"step": 8000 * 24, "lin_vel_x": (-0.6, 0.6), "ang_vel_z": (-0.5, 0.5)},
+                    {"step": 18000 * 24, "lin_vel_x": (-0.8, 0.8), "ang_vel_z": (-0.6, 0.6)},
+                    {"step": 30000 * 24, "lin_vel_x": (-0.8, 0.8)},
                 ],
             },
         ),
