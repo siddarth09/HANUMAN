@@ -20,11 +20,12 @@ Usage:
   MUJOCO_GL=egl python3 terrain_match_probe.py <bag> [--no-show]
 """
 from __future__ import annotations
-import argparse, sys
+import argparse, os, sys
 import numpy as np
 
-TERRAIN_MODEL = ("/home/sid/projects25/src/HANUMAN/mars_gazebo/"
-                 "unitree_g1_mjcf/mars_nav_200/model.xml")
+TERRAIN_MODEL = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+    "mars_gazebo", "unitree_g1_mjcf", "mars_nav_200", "model.xml")
 OFFSET = np.array([92.0, 92.0, -3.947])   # terrain body pos in the scene
 
 

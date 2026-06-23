@@ -17,7 +17,7 @@ terrain_matcher_node:
     local_bounds: [-8.0, 30.0, -14.0, 14.0]
     local_res: 0.2
     depth_max: 40.0                          # reject sky (pixels at ~8251 m)
-    local_decay: 0.99                        # <1: sliding window (old frames fade) ~2-3 s
+    local_decay: 0.6                         # short window: lidar gives a wide single-scan map; long accumulation smears it under DR drift while walking
 
     # --- matcher ---
     match_period: 2.0                        # s  (slow global side-channel)

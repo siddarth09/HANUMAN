@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+import os
+
 import numpy as np
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
@@ -13,12 +16,12 @@ from std_msgs.msg import Header
 from terrain_localization.dem import DEM
 from terrain_localization.local_map import LocalElevationMap
 from terrain_localization import matcher
-from terrain_localization.calib import model_pelvis_cam, quat_R, yaw_of
+from terrain_localization.calib import model_pelvis_cam, model_pelvis_lidar, quat_R, yaw_of
 
-_SCENE = ("/home/sid/projects25/src/HANUMAN/mars_gazebo/"
-          "unitree_g1_mjcf/mars_nav_scene.xml")
-_TERRAIN = ("/home/sid/projects25/src/HANUMAN/mars_gazebo/"
-            "unitree_g1_mjcf/mars_nav_200/model.xml")
+_MJCF = os.path.join(
+    get_package_share_directory("mars_gazebo"), "unitree_g1_mjcf")
+_SCENE = os.path.join(_MJCF, "mars_nav_scene.xml")
+_TERRAIN = os.path.join(_MJCF, "mars_nav_200", "model.xml")
 
 
 class TerrainMatcherNode(Node):
@@ -26,12 +29,19 @@ class TerrainMatcherNode(Node):
         super().__init__("terrain_matcher_node")
         gp = self.declare_parameter
         gp("scene_path", _SCENE); gp("terrain_model", _TERRAIN)
-        gp("dem_offset", [92.0, 92.0, -3.947])
-        gp("dem_bounds", [-8.0, 30.0, -14.0, 14.0]); gp("dem_res", 0.25)
+        gp("dem_offset", [0.0, 72.0, -3.577])
+        gp("dem_bounds", [-28.0, 28.0, -24.0, 28.0]); gp("dem_res", 0.25)
         gp("dem_cache", "/tmp/hanuman_dem.npz")
         gp("map_frame", "map")
         gp("depth_topic", "/d435/depth/image_raw")
         gp("camera_info_topic", "/d435/camera_info")
+        # lidar terrain source: wide 3D MID360 cloud -> richer local elevation than depth
+        gp("use_lidar", True)
+        gp("lidar_topic", "/mid360/points")
+        # seed the search + accumulate the local map from the EKF pose (smoother / lower
+        # drift than the matcher's own leg-odom integration)
+        gp("use_ekf_pose", True)
+        gp("ekf_topic", "/odometry/filtered")
         gp("leg_odom_topic", "/leg_odometry")   # world-frame velocity -> own DR position
         gp("imu_topic", "/imu_broadcaster/imu") # absolute orientation -> own DR heading
         gp("match_period", 2.0)
@@ -53,6 +63,12 @@ class TerrainMatcherNode(Node):
         gp("reloc_min_fixes", 3)       # consecutive agreeing far-fixes to commit a relocalize
         gp("reloc_cluster", 1.5)       # how tightly those fixes must agree (m)
         gp("reloc_sigma", 1.0)         # inflated x/y/z sigma for an escalated/relocalized fix (m)
+        # confidence gate + honest covariance (depth->DEM matches are ambiguous)
+        gp("conf_max_cost", 0.012)     # reject matches with residual above this
+        gp("conf_peak_ratio", 2.5)     # best cost must be this much sharper than median
+        gp("cov_sig_min", 0.4)         # published sigma floor (m)
+        gp("cov_sig_max", 2.5)         # published sigma cap (m)
+        gp("cov_scale", 1.0)           # cost-basin -> sigma scale (1.0 = no shrink)
 
         P = lambda n: self.get_parameter(n).value
         self.map_frame = P("map_frame")
@@ -73,6 +89,9 @@ class TerrainMatcherNode(Node):
         self.gate_base = P("gate_base"); self.gate_growth = P("gate_growth")
         self.gate_max = P("gate_max"); self.reloc_min = P("reloc_min_fixes")
         self.reloc_cluster = P("reloc_cluster"); self.reloc_sigma = P("reloc_sigma")
+        self.conf_max_cost = P("conf_max_cost"); self.conf_peak_ratio = P("conf_peak_ratio")
+        self.cov_sig_min = P("cov_sig_min"); self.cov_sig_max = P("cov_sig_max")
+        self.cov_scale = P("cov_scale")
         self._reloc_xy = None; self._reloc_n = 0   # pending re-localization cluster
         self.base_yaw = np.deg2rad(P("search_yaw_deg"))
         self.base_yaw_step = np.deg2rad(P("search_yaw_step_deg"))
@@ -103,10 +122,23 @@ class TerrainMatcherNode(Node):
         self.create_subscription(Image, P("depth_topic"), self._depth_cb, be)
         self.create_subscription(Odometry, P("leg_odom_topic"), self._leg_cb, be)
         self.create_subscription(Imu, P("imu_topic"), self._imu_cb, be)
+        self.use_ekf_pose = P("use_ekf_pose")
+        if self.use_ekf_pose:
+            self.create_subscription(Odometry, P("ekf_topic"), self._ekf_cb, be)
         self.pub = self.create_publisher(PoseWithCovarianceStamped, "/terrain_match/pose", 10)
         # manual localization reset: snap map<-odom to the clicked pose
         self.create_subscription(PoseWithCovarianceStamped, "/initialpose",
                                  self._initialpose_cb, 10)
+
+        self.use_lidar = P("use_lidar")
+        if self.use_lidar:
+            self.T_base_lidar = model_pelvis_lidar(P("scene_path"))
+            self.get_logger().info(
+                f"extrinsic base->lidar t={np.round(self.T_base_lidar[:3,3],3)}")
+            lb, lr, dmax, dec = self.local_cfg
+            self.lmap = LocalElevationMap((lb[0], lb[1]), (lb[2], lb[3]), lr,
+                                          (1.0, 1.0, 0.0, 0.0), depth_max=dmax, decay=dec)
+            self.create_subscription(PointCloud2, P("lidar_topic"), self._lidar_cb, be)
 
         # --- RViz debug clouds: DEM (latched, map frame) + live local map (odom) ---
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -120,6 +152,8 @@ class TerrainMatcherNode(Node):
 
     # ---- callbacks ----
     def _info_cb(self, m: CameraInfo):
+        if self.use_lidar:
+            return
         if self.K is None:
             fx, fy, cx, cy = m.k[0], m.k[4], m.k[2], m.k[5]
             lb, lr, dmax, dec = self.local_cfg
@@ -128,12 +162,24 @@ class TerrainMatcherNode(Node):
             self.K = (fx, fy, cx, cy)
             self.get_logger().info(f"camera_info: fx={fx:.1f} cx={cx:.1f}")
 
+    def _ekf_cb(self, m: Odometry):
+        p = m.pose.pose.position
+        q = m.pose.pose.orientation
+        self.dr_pos = np.array([p.x, p.y, p.z])
+        self.dr_R = quat_R(q.x, q.y, q.z, q.w)
+        self.dr_yaw = yaw_of(q.x, q.y, q.z, q.w)
+        self.have_dr = True
+
     def _imu_cb(self, m: Imu):
+        if self.use_ekf_pose:
+            return
         q = m.orientation
         self.dr_R = quat_R(q.x, q.y, q.z, q.w)         # absolute orientation (drift-free)
         self.dr_yaw = yaw_of(q.x, q.y, q.z, q.w)
 
     def _leg_cb(self, m: Odometry):
+        if self.use_ekf_pose:
+            return
         t = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
         v = m.twist.twist.linear                       # world-frame body velocity
         if self.last_leg_t is not None:
@@ -153,6 +199,15 @@ class TerrainMatcherNode(Node):
         img = np.frombuffer(m.data, np.float32).reshape(m.height, m.width)
         T_odom_base, _ = self._dr_pose()
         self.lmap.add(img, T_odom_base @ self.T_base_cam)
+
+    def _lidar_cb(self, m: PointCloud2):
+        if self.lmap is None or not self.have_dr:
+            return
+        pts = point_cloud2.read_points_numpy(m, field_names=("x", "y", "z"))
+        if pts.size == 0:
+            return
+        T_odom_base, _ = self._dr_pose()
+        self.lmap.add_cloud(pts, T_odom_base @ self.T_base_lidar)
 
     # ---- RViz debug clouds ----
     def _cloud(self, frame, X, Y, Z):
@@ -220,7 +275,7 @@ class TerrainMatcherNode(Node):
 
         best, cost_xy = matcher.search(self.dem, obs, self.px, self.py,
                                        sx, sy, syaw, dxs, dys, dyaws)
-        if not matcher.confident(best, cost_xy):
+        if not matcher.confident(best, cost_xy, self.conf_max_cost, self.conf_peak_ratio):
             self.fail_count += 1
             self.get_logger().info(
                 f"no confident match (scale x{scale}), escalating", throttle_duration_sec=4.0)
@@ -261,7 +316,8 @@ class TerrainMatcherNode(Node):
 
         self.map_T_odom = self._correction((mx, my, myaw), (ox, oy, oyaw))
         self.fail_count = 0
-        cov = matcher.covariance(cost_xy, dxs, dys, best)
+        cov = matcher.covariance(cost_xy, dxs, dys, best,
+                                 self.cov_sig_min, self.cov_sig_max, self.cov_scale)
         # an escalated/relocalized fix is less certain than the cost basin implies
         if relocalized or scale > 1:
             cov = cov.copy()

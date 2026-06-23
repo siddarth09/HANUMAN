@@ -3,16 +3,18 @@ HANUMAN — Humanoid Autonomous Navigation on Unstructured Martian And Natural T
 =====================================================================================
 
 
-Train:
-    python -m mjlab.scripts.train Hanuman-Velocity-Rough-G1 --env.scene.num-envs 1024
+  python -m mjlab.scripts.train Hanuman-Mars-v0 \
+      --env.scene.num-envs 256 \
+      --agent.resume True \
+      --agent.load-run <run-name> \
+      --agent.load-checkpoint model_<iter>.pt \
+      --agent.max-iterations 400000
 
-Play:
-    python -m mjlab.scripts.play Hanuman-Velocity-Rough-G1-Play \\
-        --checkpoint_file logs/rsl_rl/hanuman_g1_rough/<run>/model_*.pt
 """
 
 import math
 from dataclasses import replace
+from pathlib import Path
 
 from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_g1_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -61,9 +63,15 @@ from .mars_dem_terrain import mars_dem
 
 # Real HiRISE DEM exported by mars_terrain_exporter (Jezero Crater center).
 # 200x200 px @ 1.0 m/px, elevation span 31.45 m.
-MARS_DEM_FILE = (
-    "/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/"
-    "mars_nav_200/mars_nav_200.png"
+# Resolved relative to the repo root so the task is portable:
+# <repo>/layer_1/system1/env_cfg.py -> parents[2] == <repo root>.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+MARS_DEM_FILE = str(
+    _REPO_ROOT
+    / "mars_gazebo"
+    / "unitree_g1_mjcf"
+    / "mars_nav_200"
+    / "mars_nav_200.png"
 )
 
 
@@ -81,34 +89,35 @@ MARS_TERRAINS_CFG = TerrainGeneratorCfg(
     num_cols=20,
     curriculum=True,
     sub_terrains={
-        "flat": flat(proportion=0.10),  # crater floors / pads
-        # regolith fields — the everyday Mars surface
-        "random_rough": random_rough(
-            proportion=0.30,
-            noise_range=(0.02, 0.10),  # up to 10 cm
-            noise_step=0.04,
-        ),
-        # crater walls / hillsides, ~31 deg max
-        "hf_pyramid_slope": hf_pyramid_slope(
-            proportion=0.25,
-            slope_range=(0.0, 0.6),
-        ),
-        # descending into craters
-        "hf_pyramid_slope_inv": hf_pyramid_slope_inv(
-            proportion=0.10,
-            slope_range=(0.0, 0.5),
-        ),
-        "perlin_noise": perlin_noise(  # rolling dunes
-            proportion=0.25,
-            height_range=(0.0, 0.6),
-        ),
-        # Jezero DEM windows; curriculum runs flat floor -> crater wall
+        # Real Jezero DEM windows are now the bulk of training (difficulty-graded
+        # crops: easy rows = crater floor, hard rows = crater wall).
         "mars_dem": mars_dem(
-            proportion=0.15,
+            proportion=0.45,
             dem_file=MARS_DEM_FILE,
             elevation_range_m=31.45,
             dem_resolution_m=1.0,
             vertical_exaggeration=1.0,
+        ),
+        # Procedural terrain kept only as curriculum scaffolding — a clean
+        # difficulty axis the DEM crops don't guarantee on their own.
+        "perlin_noise": perlin_noise(  # rolling dunes, bumped relief
+            proportion=0.10,
+            height_range=(0.0, 0.8),
+        ),
+        "random_rough": random_rough(
+            proportion=0.10,
+            noise_range=(0.02, 0.10),  # up to 10 cm
+            noise_step=0.04,
+        ),
+        # crater walls / hillsides, ~31 deg max — controllable slope curriculum
+        "hf_pyramid_slope": hf_pyramid_slope(
+            proportion=0.20,
+            slope_range=(0.0, 0.6),
+        ),
+        # descending into craters
+        "hf_pyramid_slope_inv": hf_pyramid_slope_inv(
+            proportion=0.15,
+            slope_range=(0.0, 0.5),
         ),
     },
     add_lights=True,
@@ -235,7 +244,7 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
    
     critic_terms = {
         **actor_terms,
-        # Override height_scan without noise for critic
+      
         "height_scan": ObservationTermCfg(
             func=envs_mdp.height_scan,
             params={"sensor_name": "terrain_scan"},
@@ -272,7 +281,7 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         "critic": ObservationGroupCfg(
             terms=critic_terms,
             concatenate_terms=True,
-            enable_corruption=False,  # No noise for critic (privileged)
+            enable_corruption=False,  # No noise for critic 
         ),
     }
 
@@ -419,7 +428,7 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             params={
                 "std": math.sqrt(0.2),
                 "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
-                "terrain_sensor_names": ("foot_height_scan",),  # Mars: terrain-normal aware
+                "terrain_sensor_names": ("terrain_scan",),  # Mars: terrain-normal aware
             },
         ),
         "pose": RewardTermCfg(
@@ -468,7 +477,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     
         "air_time": RewardTermCfg(
             func=mdp.feet_air_time,
-            weight=0.1, 
+            # Reward a genuine swing phase, sized to compete with the velocity
+            # tracking terms so the gait steps instead of settling into a shuffle.
+            weight=0.5,
             params={
                 "sensor_name": "feet_ground_contact",
                 "threshold_min": 0.05,
@@ -481,7 +492,10 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       
         "foot_clearance": RewardTermCfg(
             func=mdp.feet_clearance,
-            weight=-2.0,
+            # Penalizes |foot_height - target| weighted by foot speed. Kept light
+            # so it shapes clearance without penalizing the swing motion itself;
+            # feet_swing_height owns the foot-lift target.
+            weight=-0.5,
             params={
                 "target_height": 0.1,
                 "height_sensor_name": "foot_height_scan",
@@ -492,7 +506,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         ),
         "foot_swing_height": RewardTermCfg(
             func=mdp.feet_swing_height,
-            weight=-0.5,
+            # Penalizes (peak_swing_height/target - 1)^2 at landing — the dominant
+            # foot-lift signal that drives the foot to the target swing clearance.
+            weight=-3.0,
             params={
                 "sensor_name": "feet_ground_contact",
                 "height_sensor_name": "foot_height_scan",
@@ -586,10 +602,14 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             params={
                 "command_name": "twist",
                 # Ramp commands over the first ~30k iters (step = iter * 24).
+                # Command speed capped at 0.8 m/s: full-speed commands on the steep
+                # (~31 deg) Mars slopes are infeasible and push the policy toward a
+                # flat-footed shuffle. Learn the gait at a walkable pace first.
                 "velocity_stages": [
-                    {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
-                    {"step": 15000 * 24, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.7, 0.7)},
-                    {"step": 30000 * 24, "lin_vel_x": (-1.2, 1.2)},
+                    {"step": 0, "lin_vel_x": (-0.4, 0.4), "ang_vel_z": (-0.3, 0.3)},
+                    {"step": 8000 * 24, "lin_vel_x": (-0.6, 0.6), "ang_vel_z": (-0.5, 0.5)},
+                    {"step": 18000 * 24, "lin_vel_x": (-0.8, 0.8), "ang_vel_z": (-0.6, 0.6)},
+                    {"step": 30000 * 24, "lin_vel_x": (-0.8, 0.8)},
                 ],
             },
         ),

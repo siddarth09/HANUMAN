@@ -23,6 +23,21 @@ def model_pelvis_cam(scene_path, cam_name="d435", base_body="pelvis"):
     return np.linalg.inv(Twb) @ Twc
 
 
+def model_pelvis_lidar(scene_path, site_name="mid360_lidar", base_body="pelvis"):
+    """T_base_lidar (lidar site frame expressed in the base body frame)."""
+    m = mujoco.MjModel.from_xml_path(scene_path)
+    d = mujoco.MjData(m); mujoco.mj_forward(m, d)
+    sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, site_name)
+    Tws = np.eye(4)
+    Tws[:3, :3] = d.site_xmat[sid].reshape(3, 3)
+    Tws[:3, 3] = d.site_xpos[sid]
+    bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, base_body)
+    Twb = np.eye(4)
+    Twb[:3, :3] = d.xmat[bid].reshape(3, 3)
+    Twb[:3, 3] = d.xpos[bid]
+    return np.linalg.inv(Twb) @ Tws
+
+
 def quat_R(x, y, z, w):
     return np.array([
         [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],

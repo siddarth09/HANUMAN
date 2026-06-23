@@ -21,9 +21,12 @@ def generate_launch_description():
     scene_file = os.path.join(pkg_share, 'unitree_g1_mjcf', 'mars_nav_scene.xml')
     controllers_file = os.path.join(pkg_share, 'config', 'controller_mjcf.yaml')
 
-    # Read URDF for robot_state_publisher
+    # Read URDF for robot_state_publisher. The URDF ships with a
+    # __MUJOCO_SCENE_FILE__ placeholder for the mujoco_ros2_control model param
+    # (keeps it portable); substitute the resolved share-space scene path here.
     with open(urdf_file, 'r') as f:
         robot_description = f.read()
+    robot_description = robot_description.replace('__MUJOCO_SCENE_FILE__', scene_file)
 
     # Launch arguments
     headless_arg = DeclareLaunchArgument(

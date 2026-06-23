@@ -20,7 +20,7 @@ def generate_launch_description():
         "device", default_value="cuda", description="Torch device: cuda or cpu")
     model_arg = DeclareLaunchArgument(
         "model_path",
-        default_value="/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_220000.pt",
+        default_value=os.path.join(pkg_share, "policy", "model_270000.pt"),
         description="Path to the policy .pt")
 
     height_scanner = Node(

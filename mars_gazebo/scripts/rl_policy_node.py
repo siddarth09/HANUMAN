@@ -117,14 +117,14 @@ class RLPolicyNode(Node):
     def __init__(self):
         super().__init__("rl_policy_node")
 
-        self.declare_parameter("model_path", "/home/sid/projects25/src/HANUMAN/mars_gazebo/policy/model_270000.pt")
+        default_model = os.path.join(
+            get_package_share_directory("mars_gazebo"), "policy", "model_610000.pt")
+        self.declare_parameter("model_path", default_model)
         self.declare_parameter("policy_rate", 50.0)   # policy trained at 50 Hz
         self.declare_parameter("device", "cuda")        # "cpu" or "cuda"
         self.declare_parameter("action_clip", 1.0)
         self.declare_parameter("warmup_s", 5.0)
-        # Source for base linear velocity (obs[0:3]). EKF closes the state-estimation
-        # loop (no ground-truth cheat); set to /ground_truth/odom to A/B against truth.
-        # Both publish WORLD-frame twist, rotated world->body by quat_rotate_inverse.
+       
         self.declare_parameter("odom_topic", "/odometry/filtered")
 
         self.device = self._select_device(self.get_parameter("device").value)
@@ -182,8 +182,8 @@ class RLPolicyNode(Node):
         except Exception as e:
             self.get_logger().warn(
                 f"CUDA present but unusable ({str(e)[:80]}) — using CPU. "
-                f"Launch with a torch built for this GPU (e.g. "
-                f"/home/sid/mujoco_env/bin/python) for GPU inference.")
+                f"Launch from a Python env with a torch build matching this GPU "
+                f"for GPU inference.")
             return torch.device("cpu")
 
     def _resolve_model_path(self) -> str:
@@ -259,8 +259,6 @@ class RLPolicyNode(Node):
         self.command[:] = [msg.linear.x, msg.linear.y, msg.angular.z]
 
     def _scan_cb(self, msg: LaserScan):
-        # height_scanner_node publishes 187 vertical heights (pelvis_z - terrain_z)
-        # in mjlab grid order; obs = height / max_distance (miss -> max).
         n = min(len(msg.ranges), HEIGHT_SCAN_SIZE)
         r = np.asarray(msg.ranges[:n], dtype=np.float32)
         r = np.where(np.isfinite(r), np.clip(r, 0.0, MAX_RAY_DIST), MAX_RAY_DIST)

@@ -33,6 +33,9 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
             entropy_coef=0.01,
             num_learning_epochs=5,
             num_mini_batches=4,
+            # rsl_rl's adaptive schedule floors LR at 1e-5; starting above the floor
+            # leaves room to cut LR and arrest a KL spike. 1e-4 keeps updates gentle
+            # enough for fine-tuning while preserving that downward headroom.
             learning_rate=1.0e-4,
             schedule="adaptive",
             gamma=0.99,
@@ -40,6 +43,11 @@ def hanuman_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
             desired_kl=0.01,
             max_grad_norm=1.0,
         ),
+        # Clamp policy outputs (applied pre-step in the vecenv wrapper). Healthy
+        # actions sit near +/-3 at init_std=1, so this never touches normal gait;
+        # it only bounds the action-rate penalty if the policy destabilizes,
+        # preventing an unbounded value-loss blow-up.
+        clip_actions=10.0,
         experiment_name="hanuman_g1_mars",
         save_interval=10000,
         num_steps_per_env=24,

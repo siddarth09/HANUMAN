@@ -21,7 +21,7 @@
       width="512" height="3072"/>
 
     <mesh name="mars_base_terrain"
-        file="/home/sid/projects25/src/HANUMAN/mars_gazebo/model/mars_base/meshes/mars_base.obj"
+        file="../../model/mars_base/meshes/mars_base.obj"
         scale="1.0 1.0 1.0"/>
   </asset>
 
