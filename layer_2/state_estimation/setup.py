@@ -20,7 +20,7 @@ setup(
     maintainer='sid',
     maintainer_email='siddarth.dayasagar@gmail.com',
     description='TODO: Package description',
-    license='TODO: License declaration',
+    license='MIT',
     extras_require={
         'test': [
             'pytest',

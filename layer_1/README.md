@@ -13,14 +13,20 @@ Trained with PPO using [mjlab](https://github.com/mujocolab/mjlab) + RSL-RL + Mu
 git clone https://github.com/mujocolab/mjlab && cd mjlab
 pip install -e ".[all]"
 
-# Symlink HANUMAN's system1 env into mjlab's task registry
-ln -s /home/sid/projects25/src/HANUMAN/layer_1/system1 ~/mjlab/src/mjlab/tasks/hanuman
-echo "from . import hanuman" >> ~/mjlab/src/mjlab/tasks/__init__.py
+# Link HANUMAN's system1 env into the installed mjlab task registry.
+# From the HANUMAN repo root, either run the helper (also run automatically
+# under pixi):
+./scripts/link_hanuman_tasks.sh
 
-python -c "from mjlab.tasks import hanuman; print('OK')"
+# ...or do it by hand (resolves the installed mjlab tasks dir for you):
+MJLAB_TASKS=$(python -c 'import os,mjlab.tasks;print(os.path.dirname(mjlab.tasks.__file__))')
+ln -sfn "$(pwd)/layer_1/system1" "$MJLAB_TASKS/hanuman"
+grep -q "from . import hanuman" "$MJLAB_TASKS/__init__.py" || echo "from . import hanuman" >> "$MJLAB_TASKS/__init__.py"
+
+python -c "import mjlab.tasks.hanuman; print('OK')"
 ```
 
-Task id: `Hanuman-Velocity-Rough-G1` · experiment name: `hanuman_g1_mars` (logs land in `logs/rsl_rl/hanuman_g1_mars/`).
+Task ids: `Hanuman-Mars-v0` (synthetic rough/slope mix) and `Hanuman-MarsRealistic-v0` (real Jezero DEM) · experiment name: `hanuman_g1_mars` (logs land in `logs/rsl_rl/hanuman_g1_mars/`).
 
 ---
 
@@ -28,7 +34,7 @@ Task id: `Hanuman-Velocity-Rough-G1` · experiment name: `hanuman_g1_mars` (logs
 
 ```bash
 # 256 envs fits 8GB VRAM (nconmax=300 per env)
-python -m mjlab.scripts.train Hanuman-Velocity-Rough-G1 \
+python -m mjlab.scripts.train Hanuman-Mars-v0 \
     --env.scene.num-envs 256 \
     --agent.max-iterations 300000
 ```
@@ -38,15 +44,15 @@ The RL config caps `max-iterations` at 150k by default — pass it explicitly fo
 ### Resume from a checkpoint
 
 ```bash
-python -m mjlab.scripts.train Hanuman-Velocity-Rough-G1 \
+python -m mjlab.scripts.train Hanuman-Mars-v0 \
     --env.scene.num-envs 256 \
     --agent.resume True \
-    --agent.load-run 2026-06-14_13-36-19 \
-    --agent.load-checkpoint model_270000.pt \
+    --agent.load-run <run-name> \
+    --agent.load-checkpoint model_<iter>.pt \
     --agent.max-iterations 400000
 ```
 
-`load-run` is resolved inside `logs/rsl_rl/hanuman_g1_mars/`. The policy weights, optimizer state, and iteration count are restored, so `max-iterations` must exceed the checkpoint iter (270k here).
+`load-run` is resolved inside `logs/rsl_rl/hanuman_g1_mars/`. The policy weights, optimizer state, and iteration count are restored, so `max-iterations` must exceed the checkpoint iter.
 
 > **Note on resume vs config changes:** changing reward weights or the terrain mix does *not* change the network (obs=288, act=29), so checkpoints stay loadable. But the command curriculum is keyed on the global step (`iter x 24`), so resuming at iter 270k starts past every stage -> full command speed immediately (the slow-start stages only apply to a fresh run). Terrain levels reset to `max_init_terrain_level=5` on any new run.
 
@@ -55,7 +61,7 @@ python -m mjlab.scripts.train Hanuman-Velocity-Rough-G1 \
 ## Play
 
 ```bash
-python -m mjlab.scripts.play Hanuman-Velocity-Rough-G1-Play \
+python -m mjlab.scripts.play Hanuman-Mars-v0 \
     --checkpoint_file logs/rsl_rl/hanuman_g1_mars/<run>/model_270000.pt
 ```
 
@@ -106,9 +112,9 @@ Critic gets 298 dims (actor + privileged foot air-time, contact, contact forces)
 | `track_angular_velocity` | +2.0 | Yaw-rate tracking |
 | `upright` | +0.8 | Torso aligned to the **terrain normal** (via `terrain_scan`), not world up |
 | `pose` | +1.0 | Speed-dependent posture regulation |
-| `air_time` | +0.1 | Proper swing duration |
-| `foot_clearance` | −2.0 | Clear rocks during swing (velocity-weighted) |
-| `foot_swing_height` | −0.5 | Consistent swing peak |
+| `air_time` | +0.5 | Proper swing duration (sized so stepping beats a flat shuffle) |
+| `foot_clearance` | −0.5 | Clear rocks during swing (velocity-weighted; kept light so it doesn't suppress the swing) |
+| `foot_swing_height` | −3.0 | Reach the target swing peak (dominant foot-lift signal) |
 | `foot_slip` | −0.1 | No sliding on tilted surfaces |
 | `soft_landing` | −1e-5 | Gentle touchdown |
 | `body_ang_vel` | −0.05 | Minimize wobble |
@@ -129,7 +135,7 @@ Critic gets 298 dims (actor + privileged foot air-time, contact, contact forces)
 
 ### Curriculum
 
-- **Command (step-based):** vx ±0.4 -> ±0.7 (8k) -> ±1.0 (18k) -> ±1.2 (30k); yaw-rate ramps to ±0.7. Slow start so the gait + slope climbing are learned at a walkable pace before full speed.
+- **Command (step-based):** vx ±0.4 -> ±0.6 (8k) -> ±0.8 (18k, held); yaw-rate ramps to ±0.6. Capped at 0.8 m/s — full 1.2 m/s on 31° Mars slopes was infeasible and drove a shuffle gait + terrain-curriculum regression.
 - **Terrain (performance-gated):** `terrain_levels_vel` promotes envs that traverse far enough, demotes those that fall.
 
 > **Read training by `track_linear_velocity` (>0.5) + a visual rollout + per-terrain levels — never mean reward.** A rising scalar reward with low track-velocity = the robot has found a stationary "squat" optimum. If that happens with `mars_dem` at 45%, cut it back toward 0.30 and/or restore easy terrain.

@@ -21,8 +21,8 @@
   <asset>
     <texture name="sky" type="skybox" builtin="gradient"
              rgb1="0.75 0.55 0.35" rgb2="0.35 0.15 0.05" width="512" height="3072"/>
-    <hfield name="mars_nav_200_hfield" file="/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/mars_nav_200/mars_nav_200.png" size="100.000 100.000 31.4492 3.1449"/>
-    <texture name="mars_nav_200_tex" type="2d" file="/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/mars_nav_200/mars_nav_200_albedo.png"/>
+    <hfield name="mars_nav_200_hfield" file="../mars_nav_200/mars_nav_200.png" size="100.000 100.000 31.4492 3.1449"/>
+    <texture name="mars_nav_200_tex" type="2d" file="mars_nav_200/mars_nav_200_albedo.png"/>
     <material name="mars_nav_200_mat" texture="mars_nav_200_tex" texrepeat="1 1"
               texuniform="false" specular="0.02" roughness="0.98"/>
     <material name="mars_nav_200_rock" rgba="0.4 0.27 0.18 1" specular="0.05" roughness="0.95"/>

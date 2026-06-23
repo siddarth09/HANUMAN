@@ -3,17 +3,18 @@ HANUMAN — Humanoid Autonomous Navigation on Unstructured Martian And Natural T
 =====================================================================================
 
 
-  python -m mjlab.scripts.train Hanuman-Mars-v0" \
+  python -m mjlab.scripts.train Hanuman-Mars-v0 \
       --env.scene.num-envs 256 \
       --agent.resume True \
-      --agent.load-run 2026-06-14_13-36-19 \
-      --agent.load-checkpoint model_270000.pt \
+      --agent.load-run <run-name> \
+      --agent.load-checkpoint model_<iter>.pt \
       --agent.max-iterations 400000
 
 """
 
 import math
 from dataclasses import replace
+from pathlib import Path
 
 from mjlab.asset_zoo.robots import G1_ACTION_SCALE, get_g1_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -62,9 +63,15 @@ from .mars_dem_terrain import mars_dem
 
 # Real HiRISE DEM exported by mars_terrain_exporter (Jezero Crater center).
 # 200x200 px @ 1.0 m/px, elevation span 31.45 m.
-MARS_DEM_FILE = (
-    "/home/sid/projects25/src/HANUMAN/mars_gazebo/unitree_g1_mjcf/"
-    "mars_nav_200/mars_nav_200.png"
+# Resolved relative to the repo root so the task is portable:
+# <repo>/layer_1/system1/env_cfg.py -> parents[2] == <repo root>.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+MARS_DEM_FILE = str(
+    _REPO_ROOT
+    / "mars_gazebo"
+    / "unitree_g1_mjcf"
+    / "mars_nav_200"
+    / "mars_nav_200.png"
 )
 
 
@@ -470,9 +477,8 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     
         "air_time": RewardTermCfg(
             func=mdp.feet_air_time,
-            # 0.1 -> 0.25 barely moved the gait (peak height 0.04->0.056, still a
-            # shuffle). Pushing to 0.5: a real swing phase now earns up to ~1.0,
-            # comparable to the +2.0 tracking terms, so stepping genuinely competes.
+            # Reward a genuine swing phase, sized to compete with the velocity
+            # tracking terms so the gait steps instead of settling into a shuffle.
             weight=0.5,
             params={
                 "sensor_name": "feet_ground_contact",
@@ -486,10 +492,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       
         "foot_clearance": RewardTermCfg(
             func=mdp.feet_clearance,
-            # Lowered -2.0 -> -0.5. This cost is |foot_height-target| * foot_speed,
-            # so at -2.0 it was the dominant penalty and the cheapest way to cut it
-            # was to stop lifting/swinging the feet -> it trained the shuffle gait.
-            # Keep it as a light shaping term; feet_swing_height now owns clearance.
+            # Penalizes |foot_height - target| weighted by foot speed. Kept light
+            # so it shapes clearance without penalizing the swing motion itself;
+            # feet_swing_height owns the foot-lift target.
             weight=-0.5,
             params={
                 "target_height": 0.1,
@@ -501,10 +506,8 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         ),
         "foot_swing_height": RewardTermCfg(
             func=mdp.feet_swing_height,
-            # -0.5 -> -1.0 was too weak (a 0.056m shuffle only cost ~0.2/landing vs
-            # +4 tracking). Pushing to -3.0 so the shuffle costs ~0.6/landing and the
-            # robot is forced to lift feet toward the 0.1m target. This penalizes
-            # (peak_swing_height/target - 1)^2 at landing.
+            # Penalizes (peak_swing_height/target - 1)^2 at landing — the dominant
+            # foot-lift signal that drives the foot to the target swing clearance.
             weight=-3.0,
             params={
                 "sensor_name": "feet_ground_contact",
@@ -599,10 +602,9 @@ def hanuman_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
             params={
                 "command_name": "twist",
                 # Ramp commands over the first ~30k iters (step = iter * 24).
-                # Capped at 0.8 m/s (was 1.2). Asking for 1.2 m/s on 31 deg Mars
-                # slopes was infeasible -> the robot shuffled and the terrain
-                # curriculum kept demoting it. Let it consolidate a real stepping
-                # gait at a feasible pace first; raise the cap later once it climbs.
+                # Command speed capped at 0.8 m/s: full-speed commands on the steep
+                # (~31 deg) Mars slopes are infeasible and push the policy toward a
+                # flat-footed shuffle. Learn the gait at a walkable pace first.
                 "velocity_stages": [
                     {"step": 0, "lin_vel_x": (-0.4, 0.4), "ang_vel_z": (-0.3, 0.3)},
                     {"step": 8000 * 24, "lin_vel_x": (-0.6, 0.6), "ang_vel_z": (-0.5, 0.5)},

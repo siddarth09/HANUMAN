@@ -2039,7 +2039,9 @@
       <plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
 
       
-      <param name="mujoco_model">/home/sid/projects25/install/mars_gazebo/share/mars_gazebo/unitree_g1_mjcf/mars_nav_scene.xml</param>
+      <!-- Substituted at launch by mujoco.launch.py with the installed
+           share-space path to mars_nav_scene.xml (keeps the URDF portable). -->
+      <param name="mujoco_model">__MUJOCO_SCENE_FILE__</param>
 
       <!-- Use the standing keyframe from menagerie as initial pose -->
       <param name="initial_keyframe">stand</param>

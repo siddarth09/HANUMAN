@@ -12,6 +12,7 @@
 #   python3 make_mars_nav_scene.py unitree_g1_mjcf/mars_nav_1k g1_mars.xml \
 #           unitree_g1_mjcf/mars_nav_scene.xml
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -65,8 +66,21 @@ def build_scene(terrain_dir: Path, g1_include: str, out_path: Path) -> None:
 
     site_id = terrain_dir.name
     hfield_size = re.search(r'<hfield[^>]*size="([^"]+)"', text).group(1)
-    png = (terrain_dir / f"{site_id}.png").resolve()
-    albedo = (terrain_dir / f"{site_id}_albedo.png").resolve()
+
+    # Emit asset paths relative so the generated scene is portable. MuJoCo
+    # resolves them per asset type: hfield files relative to the model's
+    # `meshdir`, textures relative to the model directory. The robot include
+    # sets `meshdir`, so read it and make the hfield path relative to that;
+    # otherwise the two would need different prefixes and one would break.
+    out_dir = out_path.resolve().parent
+    include_path = (out_dir / g1_include).resolve()
+    meshdir = out_dir
+    if include_path.exists():
+        m = re.search(r'<compiler[^>]*meshdir="([^"]+)"', include_path.read_text())
+        if m:
+            meshdir = (out_dir / m.group(1)).resolve()
+    png = os.path.relpath((terrain_dir / f"{site_id}.png").resolve(), meshdir)
+    albedo = os.path.relpath((terrain_dir / f"{site_id}_albedo.png").resolve(), out_dir)
 
     # Copy the terrain + boulder geoms verbatim (keep asset names).
     worldbody = re.search(r"<worldbody>(.*)</worldbody>", text, re.S).group(1)
